@@ -9,7 +9,7 @@ pub trait Bot {
 }
 
 /// ~1000 ELO bot with some randomness and occasional blunders.
-pub struct SpicyBot {
+pub struct BaselineBot {
     /// Search depth for negamax
     pub depth: u32,
     /// Centipawn window — pick randomly from moves within this many cp of best
@@ -18,9 +18,9 @@ pub struct SpicyBot {
     pub blunder_rate: f64,
 }
 
-impl Default for SpicyBot {
+impl Default for BaselineBot {
     fn default() -> Self {
-        SpicyBot {
+        BaselineBot {
             depth: 3,
             candidate_window: 80,
             blunder_rate: 0.15,
@@ -28,7 +28,7 @@ impl Default for SpicyBot {
     }
 }
 
-impl Bot for SpicyBot {
+impl Bot for BaselineBot {
     fn choose_move(&self, game: &GameState) -> Option<Move> {
         let legal = game.legal_moves();
         if legal.is_empty() {

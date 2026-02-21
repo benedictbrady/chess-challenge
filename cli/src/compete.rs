@@ -1,4 +1,4 @@
-/// Competition runner: pit an ONNX policy network against SpicyBot.
+/// Competition runner: pit an ONNX policy network against BaselineBot.
 ///
 /// Usage:
 ///   compete <model.onnx> [--games N]
@@ -7,7 +7,7 @@
 /// It must win ALL games to pass. Draws count as losses.
 /// Models with >10 000 000 parameters are rejected.
 
-use engine::bot::{Bot, SpicyBot};
+use engine::bot::{Bot, BaselineBot};
 use engine::game::{GameState, Outcome};
 use engine::nn::count_parameters;
 use engine::{Color, NnBot};
@@ -107,10 +107,10 @@ fn main() {
     };
 
     println!();
-    println!("Running {num_games} games vs SpicyBot…");
+    println!("Running {num_games} games vs BaselineBot…");
     println!("{}", "─".repeat(52));
 
-    let spicy = SpicyBot::default();
+    let spicy = BaselineBot::default();
 
     let mut wins = 0usize;
     let mut losses = 0usize;
@@ -158,7 +158,7 @@ fn main() {
     println!();
 
     if wins == num_games {
-        println!("PASS ✓  — beat SpicyBot {}/{num_games} games!", wins);
+        println!("PASS ✓  — beat BaselineBot {}/{num_games} games!", wins);
         std::process::exit(0);
     } else {
         println!(

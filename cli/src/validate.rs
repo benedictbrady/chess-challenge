@@ -1,13 +1,13 @@
 /// Bot ELO validation using Stockfish as a calibrated reference.
 ///
 /// Stockfish 18 supports `UCI_LimitStrength` + `UCI_Elo` (range 1320–3190).
-/// We measure SpicyBot's win rate against multiple ELO levels and solve for
+/// We measure BaselineBot's win rate against multiple ELO levels and solve for
 /// the rating that gives ~50% expected score using the ELO formula:
 ///
 ///   ELO_self = R_opp + 400 * log10(S / (1 - S))
 ///
-/// where S is SpicyBot's score (win=1, draw=0.5, loss=0).
-use engine::bot::{Bot, SpicyBot};
+/// where S is BaselineBot's score (win=1, draw=0.5, loss=0).
+use engine::bot::{Bot, BaselineBot};
 use engine::game::{GameState, Outcome};
 use engine::{Color, File, Move, Piece, Rank, Square};
 use std::io::{BufRead, BufReader, Write};
@@ -160,7 +160,7 @@ fn parse_uci_move(s: &str) -> Option<Move> {
 enum GameResult { WhiteWins, BlackWins, Draw }
 
 /// Play one game. spicy_is_white determines color assignment.
-fn play_one_game(spicy: &SpicyBot, sf: &mut StockfishProcess, spicy_is_white: bool) -> GameResult {
+fn play_one_game(spicy: &BaselineBot, sf: &mut StockfishProcess, spicy_is_white: bool) -> GameResult {
     let mut game = GameState::new();
     sf.new_game();
 
@@ -209,7 +209,7 @@ impl MatchResult {
     }
 }
 
-fn run_match(spicy: &SpicyBot, sf_elo: u32, n_games: usize) -> MatchResult {
+fn run_match(spicy: &BaselineBot, sf_elo: u32, n_games: usize) -> MatchResult {
     let mut sf = StockfishProcess::spawn(sf_elo);
     let half = n_games / 2;
     let mut wins = 0u32; let mut draws = 0u32; let mut losses = 0u32;
@@ -232,12 +232,12 @@ fn run_match(spicy: &SpicyBot, sf_elo: u32, n_games: usize) -> MatchResult {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 fn main() {
-    let spicy = SpicyBot::default();
+    let spicy = BaselineBot::default();
     let n_games = 20; // 20 per ELO level — fast but sufficient for rough estimate
 
     println!("═══════════════════════════════════════════════════════════════════");
-    println!("  SpicyBot ELO Validation  (vs Stockfish 18, {} games per level)", n_games);
-    println!("  SpicyBot: depth=3, window=80cp, blunder_rate=15%");
+    println!("  BaselineBot ELO Validation  (vs Stockfish 18, {} games per level)", n_games);
+    println!("  BaselineBot: depth=3, window=80cp, blunder_rate=15%");
     println!("  Stockfish movetime: {}ms/move", MOVETIME_MS);
     println!("═══════════════════════════════════════════════════════════════════");
     println!();
@@ -289,6 +289,6 @@ fn main() {
     println!("  └──────────────────────────────────────────────────────────┘");
     println!();
     println!("  Note: Stockfish ELO is calibrated; these estimates are reliable");
-    println!("  when SpicyBot's score is between 15% and 85% against an opponent.");
+    println!("  when BaselineBot's score is between 15% and 85% against an opponent.");
     println!("  Scores outside that range saturate the formula.");
 }

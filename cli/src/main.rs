@@ -1,4 +1,4 @@
-use engine::bot::{Bot, SpicyBot};
+use engine::bot::{Bot, BaselineBot};
 use engine::game::{GameState, Outcome};
 use engine::{Color, File, Move, Piece, Rank, Square};
 use std::io::{self, Write};
@@ -121,10 +121,10 @@ fn parse_move(input: &str, game: &GameState) -> Option<Move> {
 
 fn main() {
     let mut game = GameState::new();
-    let bot = SpicyBot::default();
+    let bot = BaselineBot::default();
     let human_color = Color::White;
 
-    println!("Chess vs SpicyBot (~1000 ELO)");
+    println!("Chess vs BaselineBot (~1000 ELO)");
     println!("You play as White. Enter moves in UCI format (e.g. e2e4, e7e8q).");
     println!("Type 'quit' to exit.");
     println!();

@@ -1,9 +1,11 @@
 use eframe::egui;
-use engine::bot::{Bot, SpicyBot};
+use engine::bot::{Bot, BaselineBot};
 use engine::game::{GameState, Outcome};
-use engine::{Color, File, Move, Piece, Rank, Square};
+use engine::{Color, File, Move, NnBot, Piece, Rank, Square};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 #[derive(Clone)]
 struct SharedState {
@@ -28,12 +30,14 @@ struct ChessApp {
     selected_square: Option<Square>,
     legal_move_targets: Vec<Square>,
     human_color: Color,
+    bot_vs_bot: bool,
 }
 
 impl ChessApp {
     fn new(
         shared: Arc<Mutex<SharedState>>,
         move_sender: std::sync::mpsc::Sender<Move>,
+        bot_vs_bot: bool,
     ) -> Self {
         ChessApp {
             shared,
@@ -41,6 +45,7 @@ impl ChessApp {
             selected_square: None,
             legal_move_targets: Vec::new(),
             human_color: Color::White,
+            bot_vs_bot,
         }
     }
 
@@ -83,11 +88,16 @@ impl eframe::App for ChessApp {
         };
 
         egui::SidePanel::right("info_panel").min_width(200.0).show(ctx, |ui| {
-            ui.heading("Chess Challenge");
+            if self.bot_vs_bot {
+                ui.heading("NnBot vs BaselineBot");
+                ui.label("NnBot (White) · BaselineBot (Black)");
+            } else {
+                ui.heading("Chess Challenge");
+            }
             ui.separator();
             ui.label(&status_message);
             if bot_thinking {
-                ui.label("Bot thinking...");
+                ui.label("Thinking...");
             }
             ui.separator();
             ui.heading("Move History");
@@ -207,45 +217,59 @@ impl eframe::App for ChessApp {
                 }
             }
 
-            // Handle clicks
-            let is_human_turn = game_snapshot.side_to_move() == self.human_color
-                && !game_snapshot.is_game_over()
-                && !bot_thinking;
+            // Human click handling — disabled in bot-vs-bot mode
+            if !self.bot_vs_bot {
+                let is_human_turn = game_snapshot.side_to_move() == self.human_color
+                    && !game_snapshot.is_game_over()
+                    && !bot_thinking;
 
-            if is_human_turn {
-                if let Some(pos) = ctx.input(|i| i.pointer.press_origin()) {
-                    if board_rect.contains(pos) && ctx.input(|i| i.pointer.primary_pressed()) {
-                        let rel = pos - board_rect.min;
-                        let file = (rel.x / cell_size) as u8;
-                        let rank = 7 - (rel.y / cell_size) as u8;
+                if is_human_turn {
+                    if let Some(pos) = ctx.input(|i| i.pointer.press_origin()) {
+                        if board_rect.contains(pos) && ctx.input(|i| i.pointer.primary_pressed()) {
+                            let rel = pos - board_rect.min;
+                            let file = (rel.x / cell_size) as u8;
+                            let rank = 7 - (rel.y / cell_size) as u8;
 
-                        if file < 8 && rank < 8 {
-                            let clicked_sq = Square::new(
-                                File::index(file as usize),
-                                Rank::index(rank as usize),
-                            );
+                            if file < 8 && rank < 8 {
+                                let clicked_sq = Square::new(
+                                    File::index(file as usize),
+                                    Rank::index(rank as usize),
+                                );
 
-                            if let Some(from) = self.selected_square {
-                                if self.legal_move_targets.contains(&clicked_sq) {
-                                    let promotion = {
-                                        let state = self.shared.lock().unwrap();
-                                        let is_pawn =
-                                            state.game.board.piece_on(from) == Some(Piece::Pawn);
-                                        let back_rank = match self.human_color {
-                                            Color::White => Rank::Eighth,
-                                            Color::Black => Rank::First,
+                                if let Some(from) = self.selected_square {
+                                    if self.legal_move_targets.contains(&clicked_sq) {
+                                        let promotion = {
+                                            let state = self.shared.lock().unwrap();
+                                            let is_pawn =
+                                                state.game.board.piece_on(from) == Some(Piece::Pawn);
+                                            let back_rank = match self.human_color {
+                                                Color::White => Rank::Eighth,
+                                                Color::Black => Rank::First,
+                                            };
+                                            if is_pawn && clicked_sq.rank() == back_rank {
+                                                Some(Piece::Queen)
+                                            } else {
+                                                None
+                                            }
                                         };
-                                        if is_pawn && clicked_sq.rank() == back_rank {
-                                            Some(Piece::Queen)
-                                        } else {
-                                            None
-                                        }
-                                    };
 
-                                    let mv = Move { from, to: clicked_sq, promotion };
-                                    let _ = self.move_sender.send(mv);
-                                    self.selected_square = None;
-                                    self.legal_move_targets.clear();
+                                        let mv = Move { from, to: clicked_sq, promotion };
+                                        let _ = self.move_sender.send(mv);
+                                        self.selected_square = None;
+                                        self.legal_move_targets.clear();
+                                    } else {
+                                        let has_own_piece = {
+                                            let state = self.shared.lock().unwrap();
+                                            state.game.board.colors(self.human_color).has(clicked_sq)
+                                        };
+                                        if has_own_piece {
+                                            self.selected_square = Some(clicked_sq);
+                                            self.update_legal_targets(clicked_sq);
+                                        } else {
+                                            self.selected_square = None;
+                                            self.legal_move_targets.clear();
+                                        }
+                                    }
                                 } else {
                                     let has_own_piece = {
                                         let state = self.shared.lock().unwrap();
@@ -254,27 +278,15 @@ impl eframe::App for ChessApp {
                                     if has_own_piece {
                                         self.selected_square = Some(clicked_sq);
                                         self.update_legal_targets(clicked_sq);
-                                    } else {
-                                        self.selected_square = None;
-                                        self.legal_move_targets.clear();
                                     }
-                                }
-                            } else {
-                                let has_own_piece = {
-                                    let state = self.shared.lock().unwrap();
-                                    state.game.board.colors(self.human_color).has(clicked_sq)
-                                };
-                                if has_own_piece {
-                                    self.selected_square = Some(clicked_sq);
-                                    self.update_legal_targets(clicked_sq);
                                 }
                             }
                         }
                     }
+                } else {
+                    self.selected_square = None;
+                    self.legal_move_targets.clear();
                 }
-            } else {
-                self.selected_square = None;
-                self.legal_move_targets.clear();
             }
         });
     }
@@ -283,9 +295,11 @@ impl eframe::App for ChessApp {
 fn run_game_loop(
     shared: Arc<Mutex<SharedState>>,
     move_receiver: std::sync::mpsc::Receiver<Move>,
-    human_color: Color,
+    nn_bot: Option<NnBot>,
+    move_delay_ms: u64,
 ) {
-    let bot = SpicyBot::default();
+    let spicy = BaselineBot::default();
+    let bot_vs_bot = nn_bot.is_some();
 
     loop {
         let (side, is_over) = {
@@ -295,75 +309,174 @@ fn run_game_loop(
 
         if is_over {
             let mut state = shared.lock().unwrap();
+            state.bot_thinking = false;
             state.status_message = match state.game.outcome() {
-                Some(Outcome::Checkmate { winner }) => format!(
-                    "{} wins by checkmate!",
-                    if winner == Color::White { "White" } else { "Black" }
-                ),
+                Some(Outcome::Checkmate { winner }) => {
+                    if bot_vs_bot {
+                        format!(
+                            "{} wins by checkmate!",
+                            if winner == Color::White { "NnBot" } else { "BaselineBot" }
+                        )
+                    } else {
+                        format!(
+                            "{} wins by checkmate!",
+                            if winner == Color::White { "White" } else { "Black" }
+                        )
+                    }
+                }
                 Some(Outcome::Draw) => "Draw!".to_string(),
                 None => "Game over.".to_string(),
             };
             break;
         }
 
-        if side == human_color {
-            {
-                let mut state = shared.lock().unwrap();
-                state.status_message = format!(
-                    "{} to move",
-                    if side == Color::White { "White (you)" } else { "Black (you)" }
-                );
-                state.bot_thinking = false;
-            }
+        if bot_vs_bot {
+            let bot_name = if side == Color::White { "NnBot" } else { "BaselineBot" };
 
-            match move_receiver.recv() {
-                Ok(mv) => {
-                    let mut state = shared.lock().unwrap();
-                    state.game.make_move(mv);
-                }
-                Err(_) => break,
-            }
-        } else {
             {
                 let mut state = shared.lock().unwrap();
                 state.bot_thinking = true;
-                state.status_message = "Bot thinking...".to_string();
+                state.status_message = format!("{} thinking...", bot_name);
             }
 
-            let game_snapshot = {
-                let state = shared.lock().unwrap();
-                state.game.clone()
+            let game_snapshot = shared.lock().unwrap().game.clone();
+
+            thread::sleep(Duration::from_millis(move_delay_ms));
+
+            let mv = if side == Color::White {
+                nn_bot.as_ref().unwrap().choose_move(&game_snapshot)
+            } else {
+                spicy.choose_move(&game_snapshot)
             };
 
-            if let Some(mv) = bot.choose_move(&game_snapshot) {
-                let mut state = shared.lock().unwrap();
-                state.game.make_move(mv);
-                state.bot_thinking = false;
-                state.status_message = format!("Bot played: {}{}", mv.from, mv.to);
+            match mv {
+                Some(mv) => {
+                    let promo = mv.promotion.map(|p| match p {
+                        Piece::Queen => "q",
+                        Piece::Rook => "r",
+                        Piece::Bishop => "b",
+                        Piece::Knight => "n",
+                        _ => "",
+                    }).unwrap_or("");
+                    let mut state = shared.lock().unwrap();
+                    state.game.make_move(mv);
+                    state.bot_thinking = false;
+                    state.status_message =
+                        format!("{} played {}{}{}", bot_name, mv.from, mv.to, promo);
+                }
+                None => {
+                    let winner = !side;
+                    let mut state = shared.lock().unwrap();
+                    state.bot_thinking = false;
+                    state.status_message = format!(
+                        "{} wins (opponent resigned)",
+                        if winner == Color::White { "NnBot" } else { "BaselineBot" }
+                    );
+                    break;
+                }
+            }
+        } else {
+            // Human (White) vs BaselineBot (Black)
+            if side == Color::White {
+                {
+                    let mut state = shared.lock().unwrap();
+                    state.status_message = "White (you) to move".to_string();
+                    state.bot_thinking = false;
+                }
+
+                match move_receiver.recv() {
+                    Ok(mv) => {
+                        let mut state = shared.lock().unwrap();
+                        state.game.make_move(mv);
+                    }
+                    Err(_) => break,
+                }
+            } else {
+                {
+                    let mut state = shared.lock().unwrap();
+                    state.bot_thinking = true;
+                    state.status_message = "Bot thinking...".to_string();
+                }
+
+                let game_snapshot = shared.lock().unwrap().game.clone();
+
+                if let Some(mv) = spicy.choose_move(&game_snapshot) {
+                    let mut state = shared.lock().unwrap();
+                    state.game.make_move(mv);
+                    state.bot_thinking = false;
+                    state.status_message = format!("Bot played: {}{}", mv.from, mv.to);
+                }
             }
         }
     }
 }
 
 fn main() -> eframe::Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+
+    // Usage: gui [model.onnx] [--delay MS]
+    let mut nn_path: Option<PathBuf> = None;
+    let mut move_delay_ms: u64 = 600;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--delay" => {
+                if let Some(val) = args.get(i + 1).and_then(|s| s.parse().ok()) {
+                    move_delay_ms = val;
+                    i += 1;
+                }
+            }
+            arg if !arg.starts_with('-') && nn_path.is_none() => {
+                nn_path = Some(PathBuf::from(arg));
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let bot_vs_bot = nn_path.is_some();
+
     let shared = Arc::new(Mutex::new(SharedState::new()));
     let (tx, rx) = std::sync::mpsc::channel::<Move>();
 
     let shared_clone = shared.clone();
     thread::spawn(move || {
-        run_game_loop(shared_clone, rx, Color::White);
+        let nn_bot = if let Some(path) = nn_path {
+            match NnBot::load(&path) {
+                Ok(b) => {
+                    println!("Loaded NnBot from {}", path.display());
+                    Some(b)
+                }
+                Err(e) => {
+                    eprintln!("Failed to load NnBot: {e}");
+                    shared_clone.lock().unwrap().status_message =
+                        format!("Failed to load model: {e}");
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
+        run_game_loop(shared_clone, rx, nn_bot, move_delay_ms);
     });
+
+    let title = if bot_vs_bot {
+        "Chess Challenge — NnBot vs BaselineBot"
+    } else {
+        "Chess Challenge"
+    };
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([800.0, 600.0])
-            .with_title("Chess Challenge"),
+            .with_title(title),
         ..Default::default()
     };
 
     eframe::run_native(
-        "Chess Challenge",
+        title,
         options,
-        Box::new(|_cc| Ok(Box::new(ChessApp::new(shared, tx)))),
+        Box::new(|_cc| Ok(Box::new(ChessApp::new(shared, tx, bot_vs_bot)))),
     )
 }
