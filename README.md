@@ -183,15 +183,6 @@ AlphaZero-style training:
 - Train on outcomes; repeat
 - Expensive but can exceed human-level play
 
-### Architecture Starting Points
-
-| Params | Architecture | Expected ELO (pure policy) |
-|--------|--------------|---------------------------|
-| ~50K   | 2-layer MLP  | Random / ~600             |
-| ~500K  | 3-layer MLP  | ~1000–1200 (if trained well) |
-| ~2M    | Small CNN    | ~1400–1600                |
-| ~10M   | ResNet-5     | ~1800–2000                |
-
 ---
 
 ## Repository Layout
@@ -214,15 +205,6 @@ chess-challenge/
 └── scripts/
     └── create_test_models.py  # Generates reference models
 ```
-
----
-
-## Tips
-
-- **Validate your encoding first.** Before training, write a quick test: set up a known position, call your encoder, and verify the tensor values are what you expect.
-- **Auto-queen is fine.** The harness always promotes to Queen. Don't waste capacity trying to learn under-promotions.
-- **Castling:** the board encoding doesn't include castling rights or en passant. Your network can still learn to castle — it will see the king and rook on their starting squares and infer castling is likely available. Adding those features as extra channels could improve play.
-- **The competition is deterministic.** SpicyBot has a 15% random blunder rate, so results will vary slightly across runs. Test with `--games 20` or more before submitting to make sure your model wins consistently.
 
 ---
 
