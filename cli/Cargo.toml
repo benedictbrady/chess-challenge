@@ -1,0 +1,21 @@
+[package]
+name = "cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "cli"
+path = "src/main.rs"
+
+[[bin]]
+name = "validate"
+path = "src/validate.rs"
+
+[[bin]]
+name = "compete"
+path = "src/compete.rs"
+
+[dependencies]
+engine = { path = "../engine" }
+rand = "0.8"
+
