@@ -20,6 +20,17 @@ impl GameState {
         }
     }
 
+    pub fn from_fen(fen: &str) -> Result<Self, String> {
+        let board: Board = fen.parse().map_err(|e| format!("Invalid FEN: {:?}", e))?;
+        let mut position_counts = HashMap::new();
+        position_counts.insert(board.hash(), 1);
+        Ok(GameState {
+            board,
+            history: Vec::new(),
+            position_counts,
+        })
+    }
+
     pub fn legal_moves(&self) -> Vec<Move> {
         let mut moves = Vec::new();
         self.board.generate_moves(|piece_moves| {
@@ -91,4 +102,35 @@ impl Default for GameState {
 pub enum Outcome {
     Checkmate { winner: Color },
     Draw,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_fen_italian_game() {
+        // Italian Game after 1.e4 e5 2.Nf3 Nc6 3.Bc4
+        let fen = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3";
+        let game = GameState::from_fen(fen).expect("valid FEN should parse");
+        assert_eq!(game.side_to_move(), Color::Black);
+        assert!(game.history.is_empty());
+        assert!(!game.is_game_over());
+        assert!(game.legal_moves().len() > 0);
+    }
+
+    #[test]
+    fn from_fen_invalid() {
+        let result = GameState::from_fen("not a valid fen");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_fen_startpos_matches_new() {
+        let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        let from_fen = GameState::from_fen(fen).unwrap();
+        let from_new = GameState::new();
+        assert_eq!(from_fen.side_to_move(), from_new.side_to_move());
+        assert_eq!(from_fen.legal_moves().len(), from_new.legal_moves().len());
+    }
 }
