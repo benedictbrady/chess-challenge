@@ -124,7 +124,7 @@ fn main() {
     let bot = BaselineBot::default();
     let human_color = Color::White;
 
-    println!("Chess vs BaselineBot (~1000 ELO)");
+    println!("Chess vs BaselineBot (~1700 ELO)");
     println!("You play as White. Enter moves in UCI format (e.g. e2e4, e7e8q).");
     println!("Type 'quit' to exit.");
     println!();

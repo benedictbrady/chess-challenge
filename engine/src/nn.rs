@@ -1,4 +1,4 @@
-use cozy_chess::{Color, Piece, Square};
+use cozy_chess::{Color, GameStatus, Piece, Square};
 use ort::session::Session;
 use ort::value::Tensor;
 use std::path::Path;
@@ -58,44 +58,6 @@ pub fn board_to_tensor(game: &GameState) -> Vec<f32> {
     tensor
 }
 
-/// Pick the best legal move given raw policy logits of length 4096.
-///
-/// Logit index = from_square_idx * 64 + to_square_idx, where square
-/// indices use the same flipped coordinate system as `board_to_tensor`.
-///
-/// Under-promotions are ignored; pawn moves to the back rank are
-/// treated as queen promotions.
-pub fn decode_policy(logits: &[f32], game: &GameState) -> Option<Move> {
-    let flip = game.board.side_to_move() == Color::Black;
-    let legal = game.legal_moves();
-
-    if legal.is_empty() {
-        return None;
-    }
-
-    let mut best_mv = None;
-    let mut best_score = f32::NEG_INFINITY;
-
-    for &mv in &legal {
-        // Skip under-promotions; queen promotion and non-promotion moves are scored
-        if mv.promotion.map_or(false, |p| p != Piece::Queen) {
-            continue;
-        }
-
-        let from_idx = square_idx(mv.from, flip);
-        let to_idx = square_idx(mv.to, flip);
-        let score = logits[from_idx * 64 + to_idx];
-
-        if score > best_score {
-            best_score = score;
-            best_mv = Some(mv);
-        }
-    }
-
-    // Edge case: position had only under-promotions (extremely rare)
-    best_mv.or_else(|| legal.into_iter().next())
-}
-
 // ---------------------------------------------------------------------------
 // Parameter counting via minimal ONNX protobuf parsing
 // ---------------------------------------------------------------------------
@@ -108,7 +70,23 @@ mod onnx_proto {
     }
 
     #[derive(Clone, PartialEq, prost::Message)]
+    pub struct AttributeProto {
+        #[prost(message, optional, tag = "5")]
+        pub t: Option<TensorProto>,
+    }
+
+    #[derive(Clone, PartialEq, prost::Message)]
+    pub struct NodeProto {
+        #[prost(string, tag = "4")]
+        pub op_type: String,
+        #[prost(message, repeated, tag = "5")]
+        pub attribute: Vec<AttributeProto>,
+    }
+
+    #[derive(Clone, PartialEq, prost::Message)]
     pub struct GraphProto {
+        #[prost(message, repeated, tag = "1")]
+        pub node: Vec<NodeProto>,
         #[prost(message, repeated, tag = "5")]
         pub initializer: Vec<TensorProto>,
     }
@@ -120,7 +98,7 @@ mod onnx_proto {
     }
 }
 
-/// Count every scalar parameter (weight or bias) stored as ONNX initializers.
+/// Count every scalar parameter stored in ONNX initializers and Constant nodes.
 pub fn count_parameters(path: &Path) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
     use prost::Message;
     let bytes = std::fs::read(path)?;
@@ -134,43 +112,88 @@ pub fn count_parameters(path: &Path) -> Result<u64, Box<dyn std::error::Error + 
                 total += count;
             }
         }
+
+        for node in &graph.node {
+            if node.op_type == "Constant" {
+                for attr in &node.attribute {
+                    if let Some(tensor) = &attr.t {
+                        if !tensor.dims.is_empty() {
+                            let count: u64 =
+                                tensor.dims.iter().map(|&d| d.max(1) as u64).product();
+                            total += count;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     Ok(total)
 }
 
 // ---------------------------------------------------------------------------
-// NnBot
+// NnEvalBot — scalar eval network with 1-ply search
 // ---------------------------------------------------------------------------
 
-/// A chess bot that runs an ONNX policy network.
+/// A chess bot that runs an ONNX scalar evaluation network with 1-ply search.
 ///
-/// The model must accept input "board" [1, 768] float32 and output
-/// "policy" [1, 4096] float32 raw logits. See the competition spec
-/// for the board encoding and move indexing convention.
-pub struct NnBot {
-    // Session::run takes &mut self, so we wrap in Mutex for Bot's &self interface
+/// The model must accept input "board" [N, 768] float32 and output a scalar
+/// eval [N, 1] float32 (positive = good for side to move).
+pub struct NnEvalBot {
     session: Mutex<Session>,
     pub param_count: u64,
 }
 
-impl NnBot {
-    pub fn load(path: &Path) -> Result<NnBot, Box<dyn std::error::Error + Send + Sync>> {
+impl NnEvalBot {
+    pub fn load(path: &Path) -> Result<NnEvalBot, Box<dyn std::error::Error + Send + Sync>> {
         let param_count = count_parameters(path)?;
         let session = Session::builder()?.commit_from_file(path)?;
-        Ok(NnBot {
+        Ok(NnEvalBot {
             session: Mutex::new(session),
             param_count,
         })
     }
 
-    fn try_choose_move(&self, game: &GameState) -> Result<Option<Move>, Box<dyn std::error::Error>> {
-        let tensor_data = board_to_tensor(game);
+    /// Evaluate a batch of positions in a single ONNX call.
+    /// Each tensor in `tensors` is a flat [768] encoding.
+    /// Returns one scalar eval per position.
+    /// Falls back to one-at-a-time inference if batching fails.
+    fn nn_eval_batch(
+        &self,
+        tensors: &[Vec<f32>],
+    ) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+        let n = tensors.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
 
-        // Build [1, 768] input tensor
-        let input = Tensor::<f32>::from_array(([1usize, 768], tensor_data))?;
+        // Try batched inference first
+        if let Ok(results) = self.nn_eval_batch_inner(tensors) {
+            return Ok(results);
+        }
 
-        // Run inference — session.run() takes &mut self
+        // Fall back to one-at-a-time
+        let mut results = Vec::with_capacity(n);
+        for t in tensors {
+            let r = self.nn_eval_batch_inner(&[t.clone()])?;
+            results.push(r[0]);
+        }
+        Ok(results)
+    }
+
+    fn nn_eval_batch_inner(
+        &self,
+        tensors: &[Vec<f32>],
+    ) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+        let n = tensors.len();
+
+        let mut flat = Vec::with_capacity(n * 768);
+        for t in tensors {
+            flat.extend_from_slice(t);
+        }
+
+        let input = Tensor::<f32>::from_array(([n, 768], flat))?;
+
         let mut session = self
             .session
             .lock()
@@ -178,20 +201,98 @@ impl NnBot {
 
         let outputs = session.run(ort::inputs!["board" => input])?;
 
-        // Extract policy logits [1, 4096] → flat &[f32]
-        let (_, logits_slice) = outputs[0].try_extract_tensor::<f32>()?;
-        let logits = logits_slice.to_vec();
+        let (_, raw) = outputs[0].try_extract_tensor::<f32>()?;
+        Ok(raw.to_vec())
+    }
 
-        Ok(decode_policy(&logits, game))
+    /// Evaluate a single position. Returns eval from the perspective of the side to move.
+    pub fn nn_eval(&self, game: &GameState) -> Result<f32, Box<dyn std::error::Error>> {
+        let tensor = board_to_tensor(game);
+        let results = self.nn_eval_batch(&[tensor])?;
+        Ok(results[0])
+    }
+
+    /// 1-ply search: evaluate all legal moves, return the best one.
+    fn try_choose_move(
+        &self,
+        game: &GameState,
+    ) -> Result<Option<Move>, Box<dyn std::error::Error>> {
+        let legal = game.legal_moves();
+        if legal.is_empty() {
+            return Ok(None);
+        }
+
+        // Separate moves into terminal (checkmate/draw) and those needing NN eval
+        let mut best_checkmate: Option<Move> = None;
+        let mut draw_moves: Vec<Move> = Vec::new();
+        let mut eval_moves: Vec<Move> = Vec::new();
+        let mut eval_tensors: Vec<Vec<f32>> = Vec::new();
+
+        for &mv in &legal {
+            let mut child_board = game.board.clone();
+            child_board.play_unchecked(mv);
+
+            match child_board.status() {
+                GameStatus::Won => {
+                    // The side that just moved won = checkmate
+                    best_checkmate = Some(mv);
+                    break;
+                }
+                GameStatus::Drawn => {
+                    draw_moves.push(mv);
+                }
+                GameStatus::Ongoing => {
+                    // Build a GameState for the child to get proper tensor encoding
+                    let child_game = GameState::from_board(child_board);
+                    eval_tensors.push(board_to_tensor(&child_game));
+                    eval_moves.push(mv);
+                }
+            }
+        }
+
+        // Immediate checkmate
+        if let Some(mv) = best_checkmate {
+            return Ok(Some(mv));
+        }
+
+        // Evaluate all non-terminal positions in one batch
+        let evals = self.nn_eval_batch(&eval_tensors)?;
+
+        // Find the best move: negate child evals (opponent's perspective)
+        let mut best_mv: Option<Move> = None;
+        let mut best_eval = f32::NEG_INFINITY;
+
+        for (i, &mv) in eval_moves.iter().enumerate() {
+            let eval = -evals[i]; // negate: child is from opponent's view
+            if eval > best_eval {
+                best_eval = eval;
+                best_mv = Some(mv);
+            }
+        }
+
+        // Draws get eval 0.0
+        for &mv in &draw_moves {
+            if 0.0 > best_eval {
+                best_eval = 0.0;
+                best_mv = Some(mv);
+            }
+        }
+
+        // Fallback: if nothing scored (all moves were draws and no eval moves)
+        if best_mv.is_none() {
+            best_mv = draw_moves.into_iter().next().or_else(|| legal.into_iter().next());
+        }
+
+        Ok(best_mv)
     }
 }
 
-impl Bot for NnBot {
+impl Bot for NnEvalBot {
     fn choose_move(&self, game: &GameState) -> Option<Move> {
         match self.try_choose_move(game) {
             Ok(mv) => mv,
             Err(e) => {
-                eprintln!("NnBot inference error: {e}");
+                eprintln!("NnEvalBot inference error: {e}");
                 None
             }
         }

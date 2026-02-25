@@ -20,6 +20,16 @@ impl GameState {
         }
     }
 
+    pub fn from_board(board: Board) -> Self {
+        let mut position_counts = HashMap::new();
+        position_counts.insert(board.hash(), 1);
+        GameState {
+            board,
+            history: Vec::new(),
+            position_counts,
+        }
+    }
+
     pub fn from_fen(fen: &str) -> Result<Self, String> {
         let board: Board = fen.parse().map_err(|e| format!("Invalid FEN: {:?}", e))?;
         let mut position_counts = HashMap::new();
