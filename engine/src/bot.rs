@@ -23,7 +23,7 @@ impl Default for BaselineBot {
     fn default() -> Self {
         BaselineBot {
             depth: 5,
-            candidate_window: 30,
+            candidate_window: 0,
             blunder_rate: 0.0,
         }
     }
@@ -31,7 +31,7 @@ impl Default for BaselineBot {
 
 impl BaselineBot {
     pub fn description() -> &'static str {
-        "Alpha-beta depth 5, material+PST+king-safety eval, 30cp window, no blunders"
+        "Alpha-beta depth 5 + quiescence, material+PST+king-safety eval, best move, no blunders"
     }
 }
 
