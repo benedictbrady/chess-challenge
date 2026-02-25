@@ -335,6 +335,232 @@ fn attacker_penalty(board: &Board, color: Color) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
+// Passed pawns
+// ---------------------------------------------------------------------------
+
+/// Check if a pawn is passed (no enemy pawns on same or adjacent files ahead).
+fn is_passed_pawn(board: &Board, sq: Square, color: Color) -> bool {
+    let file = sq.file() as usize;
+    let rank = sq.rank() as usize;
+    let enemy_pawns = board.colored_pieces(!color, Piece::Pawn);
+
+    let lo = if file > 0 { file - 1 } else { 0 };
+    let hi = if file < 7 { file + 1 } else { 7 };
+
+    for f in lo..=hi {
+        // Check all ranks ahead of the pawn
+        let start_rank = match color {
+            Color::White => rank + 1,
+            Color::Black => 0,
+        };
+        let end_rank = match color {
+            Color::White => 8,
+            Color::Black => rank,
+        };
+        for r in start_rank..end_rank {
+            let check_sq = Square::new(File::index(f), Rank::index(r));
+            if enemy_pawns.has(check_sq) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Evaluate passed pawns for one side. Returns (mg_bonus, eg_bonus).
+/// Uses quadratic scaling by rank (inspired by Stockfish classical eval).
+fn passed_pawn_eval(board: &Board, color: Color) -> (i32, i32) {
+    let friendly_pawns = board.colored_pieces(color, Piece::Pawn);
+    let mut mg = 0i32;
+    let mut eg = 0i32;
+
+    for sq in friendly_pawns {
+        if !is_passed_pawn(board, sq, color) {
+            continue;
+        }
+
+        // Ranks advanced from starting position (0-based: rank 2→0, rank 7→5)
+        let r = match color {
+            Color::White => sq.rank() as i32 - 1, // rank 2 = 1 → r=0, rank 7 = 6 → r=5
+            Color::Black => 6 - sq.rank() as i32,  // rank 7 = 6 → r=0, rank 2 = 1 → r=5
+        };
+        let r = r.max(0);
+        let rr = r * (r - 1).max(0);
+
+        // Base bonuses (quadratic scaling)
+        mg += 15 * rr;
+        eg += 10 * (rr + r + 1);
+
+        // King distance bonus in endgame: friendly king near passer is good,
+        // enemy king far from passer is good
+        let friendly_king = board.king(color);
+        let enemy_king = board.king(!color);
+
+        let promo_sq = match color {
+            Color::White => Square::new(sq.file(), Rank::Eighth),
+            Color::Black => Square::new(sq.file(), Rank::First),
+        };
+
+        let friendly_dist = chebyshev_distance(friendly_king, sq);
+        let enemy_dist = chebyshev_distance(enemy_king, promo_sq);
+
+        // Bonus for enemy king being far from the promotion square
+        eg += (enemy_dist as i32) * 5 * r;
+        // Bonus for friendly king being close to the pawn
+        eg -= (friendly_dist as i32) * 2 * r;
+    }
+
+    (mg, eg)
+}
+
+fn chebyshev_distance(a: Square, b: Square) -> u32 {
+    let df = (a.file() as i32 - b.file() as i32).unsigned_abs();
+    let dr = (a.rank() as i32 - b.rank() as i32).unsigned_abs();
+    df.max(dr)
+}
+
+// ---------------------------------------------------------------------------
+// Piece mobility
+// ---------------------------------------------------------------------------
+
+/// Count pseudo-legal moves for pieces (excluding pawns and king).
+/// Returns (mg_bonus, eg_bonus).
+fn mobility_eval(board: &Board, color: Color) -> (i32, i32) {
+    let occupied = board.occupied();
+    // Squares controlled by enemy pawns are "unsafe" for minors
+    let enemy_pawn_attacks = {
+        let mut attacks = cozy_chess::BitBoard::EMPTY;
+        for sq in board.colored_pieces(!color, Piece::Pawn) {
+            attacks = attacks | get_pawn_attacks(sq, !color);
+        }
+        attacks
+    };
+
+    let mut mg = 0i32;
+    let mut eg = 0i32;
+
+    // Knights: ~4cp MG, ~4cp EG per move (excluding pawn-controlled squares)
+    for sq in board.colored_pieces(color, Piece::Knight) {
+        let moves = get_knight_moves(sq) & !enemy_pawn_attacks;
+        let count = moves.len() as i32;
+        mg += (count - 4) * 4; // baseline 4 moves = 0 bonus
+        eg += (count - 4) * 4;
+    }
+
+    // Bishops: ~5cp MG, ~5cp EG per move
+    for sq in board.colored_pieces(color, Piece::Bishop) {
+        let moves = get_bishop_moves(sq, occupied) & !enemy_pawn_attacks;
+        let count = moves.len() as i32;
+        mg += (count - 6) * 5; // baseline 6 moves = 0 bonus
+        eg += (count - 6) * 5;
+    }
+
+    // Rooks: ~3cp MG, ~7cp EG per move (much more important in endgames)
+    for sq in board.colored_pieces(color, Piece::Rook) {
+        let moves = get_rook_moves(sq, occupied);
+        let count = moves.len() as i32;
+        mg += (count - 7) * 3; // baseline 7 moves = 0 bonus
+        eg += (count - 7) * 7;
+    }
+
+    // Queens: ~1cp MG, ~2cp EG per move (queens are usually mobile)
+    for sq in board.colored_pieces(color, Piece::Queen) {
+        let moves = get_rook_moves(sq, occupied) | get_bishop_moves(sq, occupied);
+        let count = moves.len() as i32;
+        mg += (count - 14) * 1;
+        eg += (count - 14) * 2;
+    }
+
+    (mg, eg)
+}
+
+// ---------------------------------------------------------------------------
+// Pawn structure
+// ---------------------------------------------------------------------------
+
+/// Penalties for doubled and isolated pawns. Returns (mg_penalty, eg_penalty).
+fn pawn_structure_eval(board: &Board, color: Color) -> (i32, i32) {
+    let friendly_pawns = board.colored_pieces(color, Piece::Pawn);
+    let mut mg = 0i32;
+    let mut eg = 0i32;
+
+    for f in 0..8u8 {
+        let file_bb = File::index(f as usize).bitboard();
+        let pawns_on_file = (friendly_pawns & file_bb).len() as i32;
+
+        // Doubled pawns: penalty for each extra pawn on same file
+        if pawns_on_file > 1 {
+            mg -= (pawns_on_file - 1) * 10;
+            eg -= (pawns_on_file - 1) * 20;
+        }
+
+        // Isolated pawns: no friendly pawns on adjacent files
+        if pawns_on_file > 0 {
+            let has_adjacent = {
+                let left = if f > 0 { !(friendly_pawns & File::index((f - 1) as usize).bitboard()).is_empty() } else { false };
+                let right = if f < 7 { !(friendly_pawns & File::index((f + 1) as usize).bitboard()).is_empty() } else { false };
+                left || right
+            };
+            if !has_adjacent {
+                mg -= 10;
+                eg -= 15;
+            }
+        }
+    }
+
+    (mg, eg)
+}
+
+// ---------------------------------------------------------------------------
+// Bishop pair
+// ---------------------------------------------------------------------------
+
+fn bishop_pair_bonus(board: &Board, color: Color) -> (i32, i32) {
+    if board.colored_pieces(color, Piece::Bishop).len() >= 2 {
+        (30, 50) // bishop pair is very strong, especially in endgame
+    } else {
+        (0, 0)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rook on open/semi-open file
+// ---------------------------------------------------------------------------
+
+fn rook_file_bonus(board: &Board, color: Color) -> (i32, i32) {
+    let friendly_pawns = board.colored_pieces(color, Piece::Pawn);
+    let enemy_pawns = board.colored_pieces(!color, Piece::Pawn);
+    let mut mg = 0i32;
+    let mut eg = 0i32;
+
+    for sq in board.colored_pieces(color, Piece::Rook) {
+        let file_bb = sq.file().bitboard();
+        let has_friendly_pawn = !(friendly_pawns & file_bb).is_empty();
+        let has_enemy_pawn = !(enemy_pawns & file_bb).is_empty();
+
+        if !has_friendly_pawn && !has_enemy_pawn {
+            mg += 20; // open file
+            eg += 25;
+        } else if !has_friendly_pawn {
+            mg += 10; // semi-open
+            eg += 15;
+        }
+    }
+
+    // Rook on 7th rank bonus
+    let seventh_rank = match color {
+        Color::White => Rank::Seventh.bitboard(),
+        Color::Black => Rank::Second.bitboard(),
+    };
+    for _sq in board.colored_pieces(color, Piece::Rook) & seventh_rank {
+        mg += 20;
+        eg += 40;
+    }
+
+    (mg, eg)
+}
+
+// ---------------------------------------------------------------------------
 // Main evaluation — tapered
 // ---------------------------------------------------------------------------
 
@@ -373,7 +599,31 @@ pub fn evaluate(board: &Board) -> i32 {
         let safety =
             pawn_shield_bonus(board, color) + open_file_penalty(board, color) + attacker_penalty(board, color);
         mg_score += sign * safety;
-        // eg_score gets no king safety — in endgames it's irrelevant
+
+        // Passed pawns
+        let (pp_mg, pp_eg) = passed_pawn_eval(board, color);
+        mg_score += sign * pp_mg;
+        eg_score += sign * pp_eg;
+
+        // Piece mobility
+        let (mob_mg, mob_eg) = mobility_eval(board, color);
+        mg_score += sign * mob_mg;
+        eg_score += sign * mob_eg;
+
+        // Pawn structure
+        let (ps_mg, ps_eg) = pawn_structure_eval(board, color);
+        mg_score += sign * ps_mg;
+        eg_score += sign * ps_eg;
+
+        // Bishop pair
+        let (bp_mg, bp_eg) = bishop_pair_bonus(board, color);
+        mg_score += sign * bp_mg;
+        eg_score += sign * bp_eg;
+
+        // Rook on open files + 7th rank
+        let (rf_mg, rf_eg) = rook_file_bonus(board, color);
+        mg_score += sign * rf_mg;
+        eg_score += sign * rf_eg;
     }
 
     // Blend: phase=256 → pure middlegame, phase=0 → pure endgame

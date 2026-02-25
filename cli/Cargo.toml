@@ -15,6 +15,14 @@ path = "src/validate.rs"
 name = "compete"
 path = "src/compete.rs"
 
+[[bin]]
+name = "diagnose"
+path = "src/diagnose.rs"
+
+[[bin]]
+name = "selfplay"
+path = "src/selfplay.rs"
+
 [dependencies]
 engine = { path = "../engine" }
 rand = "0.8"
