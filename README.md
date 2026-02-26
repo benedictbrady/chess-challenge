@@ -2,7 +2,7 @@
 
 **Build the smallest neural network that can beat a strong chess engine.**
 
-Train an ONNX evaluation network and run it against an alpha-beta baseline (~1500-1600 Elo). Your net uses only 1-ply search — it evaluates every legal move one step ahead and picks the best. To pass, you must score **70% or higher across 50 games**. The winning submission is the one with the fewest parameters.
+Train an ONNX evaluation network and run it against increasingly strong alpha-beta baselines (levels 1–5). Your net uses only 1-ply search — it evaluates every legal move one step ahead and picks the best. Each level requires **70% or higher across 50 games**. Submissions are rated by highest level passed, then fewest parameters.
 
 ---
 
@@ -13,10 +13,24 @@ Can a neural network's position understanding substitute for search depth?
 | | Baseline | Your NN |
 |---|---|---|
 | **Eval** | Handcrafted (material, PSTs, king safety, passed pawns, mobility, pawn structure) | Learned (your ONNX model) |
-| **Search** | Alpha-beta depth 4 + quiescence | 1-ply (evaluate all legal moves, pick best) |
-| **Target Elo** | ~1500–1600 | Must beat baseline at 70% |
+| **Search** | Alpha-beta depth 1–4 + quiescence | 1-ply (evaluate all legal moves, pick best) |
+| **Target Elo** | ~1500–1600 (Level 5) | Must beat baseline at 70% per level |
 
-The baseline sees 5 moves ahead with a handcrafted eval. Your network sees 1 move ahead but with (hopefully) a much stronger learned eval. Who wins?
+The baseline sees several moves ahead with a handcrafted eval. Your network sees 1 move ahead but with (hopefully) a much stronger learned eval. Who wins?
+
+### Levels
+
+Your model is tested against increasingly strong baselines:
+
+| Level | Name | Depth | Mode | Description |
+|-------|------|-------|------|-------------|
+| 1 | Beginner | 1 | classic | Pure eval — picks best immediate position |
+| 2 | Novice | 2 | classic | 2-ply alpha-beta + quiescence |
+| 3 | Intermediate | 3 | classic | 3-ply alpha-beta + quiescence |
+| 4 | Advanced | 3 | enhanced | 3-ply + TT/PVS/NMP/delta pruning |
+| 5 | Expert | 4 | enhanced | Full strength baseline (~1500–1600 Elo) |
+
+Levels 3 and 4 are both depth 3, but enhanced mode adds transposition tables, null-move pruning, and other techniques — a meaningful jump in difficulty. By default the runner tests all levels and stops at the first failure.
 
 ---
 
@@ -63,16 +77,16 @@ Checkmates are detected immediately (no NN needed). Draws evaluate to 0.0.
 - Output can have any name (accessed by index)
 - `ir_version = 8`, opset 17 recommended
 - All weights stored as ONNX initializers (the harness counts parameters from these)
-- Max **10,000,000 parameters**
+- Max **1,000,000 parameters**
 
 ---
 
 ## Rules
 
-1. **50 games total** — 25 opening positions × 2 colors (NN plays both sides)
+1. **50 games per level** — 25 opening positions × 2 colors (NN plays both sides)
 2. **Score 70% or higher** — win=1, draw=0.5, loss=0 (need 35/50 points)
-3. **10M parameter limit** — models exceeding this are rejected
-4. **Score = parameter count** — lower is better
+3. **1M parameter limit** — models exceeding this are rejected
+4. **Two-axis rating** — highest level passed, then fewest parameters (lower is better)
 5. Games use openings from the book (`data/openings.txt`)
 
 ---
@@ -94,8 +108,14 @@ cargo build --workspace
 
 ### Run the Competition
 
+Run all levels (stops at first failure):
 ```bash
 cargo run -p cli --bin compete -- path/to/your_model.onnx
+```
+
+Run a single level:
+```bash
+cargo run -p cli --bin compete -- path/to/your_model.onnx --level 1
 ```
 
 A reference model is included for testing the pipeline:
