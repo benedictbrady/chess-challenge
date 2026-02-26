@@ -2,7 +2,7 @@
 
 **Build the smallest neural network that can beat a strong chess engine.**
 
-Train an ONNX evaluation network and run it against an alpha-beta baseline (~1500-1600 Elo). Your net uses only 1-ply search — it evaluates every legal move one step ahead and picks the best. To pass, you must score **70% or higher across 50 games**. The winning submission is the one with the fewest parameters.
+Train an ONNX evaluation network and run it against increasingly strong alpha-beta baselines (levels 1–5). Your net uses only 1-ply search — it evaluates every legal move one step ahead and picks the best. Each level requires **70% or higher across 50 games**. Submissions are rated by highest level passed, then fewest parameters.
 
 ---
 
@@ -14,7 +14,7 @@ Can a neural network's position understanding substitute for search depth?
 |---|---|---|
 | **Eval** | Handcrafted (material, PSTs, king safety, passed pawns, mobility, pawn structure) | Learned (your ONNX model) |
 | **Search** | Alpha-beta depth 1–4 + quiescence | 1-ply (evaluate all legal moves, pick best) |
-| **Target Elo** | ~1500–1600 (Level 5) | Must beat baseline at 70% |
+| **Target Elo** | ~1500–1600 (Level 5) | Must beat baseline at 70% per level |
 
 The baseline sees several moves ahead with a handcrafted eval. Your network sees 1 move ahead but with (hopefully) a much stronger learned eval. Who wins?
 
