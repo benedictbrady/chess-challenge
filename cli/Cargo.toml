@@ -15,6 +15,10 @@ path = "src/validate.rs"
 name = "compete"
 path = "src/compete.rs"
 
+[[bin]]
+name = "benchmark"
+path = "src/benchmark.rs"
+
 [dependencies]
 engine = { path = "../engine" }
 rand = "0.8"

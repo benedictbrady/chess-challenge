@@ -319,7 +319,7 @@ fn main() {
         pass_points,
         TOTAL_GAMES,
     );
-    println!("Baseline: {}", BaselineBot::description());
+    println!("Baseline: {}", baseline.description());
 
     let mut diversity = DiversityTracker::new();
     let mut total_score: f64 = 0.0;
@@ -331,6 +331,7 @@ fn main() {
 
     for (pos_idx, fen) in positions.iter().enumerate() {
         // Game A: NN=White vs Baseline=Black
+        baseline.reset();
         let (outcome_a, plies_a, nn_moves_a) =
             run_game(&nn, &baseline, Some(fen), true);
         diversity.record_game(&nn_moves_a);
@@ -343,6 +344,7 @@ fn main() {
         }
 
         // Game B: Baseline=White vs NN=Black
+        baseline.reset();
         let (outcome_b, plies_b, nn_moves_b) =
             run_game(&baseline, &nn, Some(fen), false);
         diversity.record_game(&nn_moves_b);

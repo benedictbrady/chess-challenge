@@ -2,21 +2,23 @@ use cozy_chess::Move;
 use rand::Rng;
 
 use crate::game::GameState;
-use crate::search::best_move_with_scores;
+use crate::search::{
+    best_move_with_scores_classic, best_move_with_scores_enhanced, SearchContext,
+};
 
 pub trait Bot {
     fn choose_move(&self, game: &GameState) -> Option<Move>;
 }
 
-/// Strong baseline bot (~1600-1800 Elo) using alpha-beta search with
-/// material + PST + king safety evaluation.
+/// Baseline bot with configurable search mode.
 pub struct BaselineBot {
-    /// Search depth for negamax
     pub depth: u32,
-    /// Centipawn window — pick randomly from moves within this many cp of best
     pub candidate_window: i32,
-    /// Probability (0.0–1.0) of playing a completely random legal move
     pub blunder_rate: f64,
+    /// true = enhanced (TT, PVS, NMP, delta pruning), false = classic
+    pub enhanced: bool,
+    /// Shared search context for enhanced mode (persists across moves)
+    ctx: std::cell::RefCell<SearchContext>,
 }
 
 impl Default for BaselineBot {
@@ -25,13 +27,45 @@ impl Default for BaselineBot {
             depth: 4,
             candidate_window: 0,
             blunder_rate: 0.0,
+            enhanced: true,
+            ctx: std::cell::RefCell::new(SearchContext::new()),
         }
     }
 }
 
 impl BaselineBot {
-    pub fn description() -> &'static str {
-        "Alpha-beta depth 4 + quiescence, tapered eval (material, PSTs, king safety, passed pawns, mobility, pawn structure, bishop pair, rook bonuses)"
+    pub fn new(depth: u32, candidate_window: i32, blunder_rate: f64, enhanced: bool) -> Self {
+        BaselineBot {
+            depth,
+            candidate_window,
+            blunder_rate,
+            enhanced,
+            ctx: std::cell::RefCell::new(SearchContext::new()),
+        }
+    }
+
+    /// Create a classic (original) bot with no search enhancements.
+    pub fn classic(depth: u32) -> Self {
+        Self::new(depth, 0, 0.0, false)
+    }
+
+    /// Reset search context (call between games to avoid TT pollution).
+    pub fn reset(&self) {
+        *self.ctx.borrow_mut() = SearchContext::new();
+    }
+
+    pub fn description(&self) -> String {
+        if self.enhanced {
+            format!(
+                "Alpha-beta depth {} + TT + PVS + NMP + delta pruning, tapered eval",
+                self.depth
+            )
+        } else {
+            format!(
+                "Alpha-beta depth {} + quiescence (classic), tapered eval",
+                self.depth
+            )
+        }
     }
 }
 
@@ -44,27 +78,27 @@ impl Bot for BaselineBot {
 
         let mut rng = rand::thread_rng();
 
-        // Blunder: random legal move
         if self.blunder_rate > 0.0 && rng.gen::<f64>() < self.blunder_rate {
             let idx = rng.gen_range(0..legal.len());
             return Some(legal[idx]);
         }
 
-        // Score all moves
-        let mut scored = best_move_with_scores(&game.board, self.depth);
+        let mut scored = if self.enhanced {
+            let mut ctx = self.ctx.borrow_mut();
+            best_move_with_scores_enhanced(&mut ctx, &game.board, self.depth)
+        } else {
+            best_move_with_scores_classic(&game.board, self.depth)
+        };
+
         if scored.is_empty() {
             let idx = rng.gen_range(0..legal.len());
             return Some(legal[idx]);
         }
 
-        // Find best score
         let best_score = scored.iter().map(|(_, s)| *s).max().unwrap();
-
-        // Collect candidates within window of best
         let threshold = best_score - self.candidate_window;
         scored.retain(|(_, s)| *s >= threshold);
 
-        // Pick randomly among candidates
         let idx = rng.gen_range(0..scored.len());
         Some(scored[idx].0)
     }

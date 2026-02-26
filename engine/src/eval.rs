@@ -379,20 +379,43 @@ fn piece_eval(board: &Board, color: Color) -> (i32, i32, i32) {
 // Passed pawns (bitboard-based)
 // ---------------------------------------------------------------------------
 
-/// Build a bitboard mask of all ranks ahead of `rank` for `color`, on files lo..=hi.
-fn forward_file_mask(color: Color, rank: usize, lo: usize, hi: usize) -> cozy_chess::BitBoard {
-    let mut mask = cozy_chess::BitBoard::EMPTY;
-    let (start, end) = match color {
-        Color::White => (rank + 1, 8),
-        Color::Black => (0, rank),
+/// Precomputed forward file masks for passed pawn detection.
+/// FORWARD_MASK[color][square] covers the file and adjacent files, all ranks ahead.
+struct ForwardMasks {
+    white: [cozy_chess::BitBoard; 64],
+    black: [cozy_chess::BitBoard; 64],
+}
+
+static FORWARD_MASKS: std::sync::LazyLock<ForwardMasks> = std::sync::LazyLock::new(|| {
+    let mut masks = ForwardMasks {
+        white: [cozy_chess::BitBoard::EMPTY; 64],
+        black: [cozy_chess::BitBoard::EMPTY; 64],
     };
-    for f in lo..=hi {
-        for r in start..end {
-            mask = mask | Square::new(File::index(f), Rank::index(r)).bitboard();
+    for file in 0..8usize {
+        let lo = file.saturating_sub(1);
+        let hi = (file + 1).min(7);
+        for rank in 0..8usize {
+            // White: ranks above
+            let mut w = cozy_chess::BitBoard::EMPTY;
+            for f in lo..=hi {
+                for r in (rank + 1)..8 {
+                    w = w | Square::new(File::index(f), Rank::index(r)).bitboard();
+                }
+            }
+            masks.white[rank * 8 + file] = w;
+
+            // Black: ranks below
+            let mut b = cozy_chess::BitBoard::EMPTY;
+            for f in lo..=hi {
+                for r in 0..rank {
+                    b = b | Square::new(File::index(f), Rank::index(r)).bitboard();
+                }
+            }
+            masks.black[rank * 8 + file] = b;
         }
     }
-    mask
-}
+    masks
+});
 
 /// Evaluate passed pawns for one side. Returns (mg_bonus, eg_bonus).
 fn passed_pawn_eval(board: &Board, color: Color) -> (i32, i32) {
@@ -404,13 +427,14 @@ fn passed_pawn_eval(board: &Board, color: Color) -> (i32, i32) {
     let mut eg = 0i32;
 
     for sq in friendly_pawns {
-        let file = sq.file() as usize;
         let rank = sq.rank() as usize;
-        let lo = file.saturating_sub(1);
-        let hi = (file + 1).min(7);
 
-        // Check if passed using bitboard mask
-        let mask = forward_file_mask(color, rank, lo, hi);
+        // Check if passed using precomputed bitboard mask
+        let idx = rank * 8 + sq.file() as usize;
+        let mask = match color {
+            Color::White => FORWARD_MASKS.white[idx],
+            Color::Black => FORWARD_MASKS.black[idx],
+        };
         if !(enemy_pawns & mask).is_empty() {
             continue; // not passed
         }
