@@ -77,7 +77,7 @@ Checkmates are detected immediately (no NN needed). Draws evaluate to 0.0.
 - Output can have any name (accessed by index)
 - `ir_version = 8`, opset 17 recommended
 - All weights stored as ONNX initializers (the harness counts parameters from these)
-- Max **10,000,000 parameters**
+- Max **1,000,000 parameters**
 
 ---
 
@@ -85,7 +85,7 @@ Checkmates are detected immediately (no NN needed). Draws evaluate to 0.0.
 
 1. **50 games per level** — 25 opening positions × 2 colors (NN plays both sides)
 2. **Score 70% or higher** — win=1, draw=0.5, loss=0 (need 35/50 points)
-3. **10M parameter limit** — models exceeding this are rejected
+3. **1M parameter limit** — models exceeding this are rejected
 4. **Two-axis rating** — highest level passed, then fewest parameters (lower is better)
 5. Games use openings from the book (`data/openings.txt`)
 

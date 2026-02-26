@@ -5,7 +5,7 @@
 ///
 /// The NN plays 50 games (25 positions x 2 colors) per level against increasingly
 /// strong baselines. Scoring: 1 for win, 0.5 for draw, 0 for loss. Must reach 70%.
-/// Models with >10 000 000 parameters are rejected.
+/// Models with >1 000 000 parameters are rejected.
 
 use engine::bot::Bot;
 use engine::game::{GameState, Outcome};
@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
 
-const MAX_PARAMS: u64 = 10_000_000;
+const MAX_PARAMS: u64 = 1_000_000;
 const MAX_PLIES: usize = 500;
 const NUM_POSITIONS: usize = 25;
 const TOTAL_GAMES: usize = 50; // NUM_POSITIONS * 2
