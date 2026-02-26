@@ -22,7 +22,7 @@ pub struct BaselineBot {
 impl Default for BaselineBot {
     fn default() -> Self {
         BaselineBot {
-            depth: 5,
+            depth: 4,
             candidate_window: 0,
             blunder_rate: 0.0,
         }
@@ -31,7 +31,7 @@ impl Default for BaselineBot {
 
 impl BaselineBot {
     pub fn description() -> &'static str {
-        "Alpha-beta depth 5 + quiescence, tapered eval (material, PSTs, king safety, passed pawns, mobility, pawn structure, bishop pair, rook bonuses)"
+        "Alpha-beta depth 4 + quiescence, tapered eval (material, PSTs, king safety, passed pawns, mobility, pawn structure, bishop pair, rook bonuses)"
     }
 }
 

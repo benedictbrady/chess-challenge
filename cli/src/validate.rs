@@ -24,8 +24,8 @@ const MOVETIME_MS: u32 = 500; // ms per Stockfish move
 const MAX_HALFMOVES: usize = 300;
 const DEFAULT_GAMES: usize = 100;
 const DEFAULT_OPENINGS_PATH: &str = "data/openings.txt";
-const TARGET_LO: f64 = 1600.0;
-const TARGET_HI: f64 = 1800.0;
+const TARGET_LO: f64 = 1400.0;
+const TARGET_HI: f64 = 1700.0;
 
 // ── CLI argument parsing ──────────────────────────────────────────────────────
 

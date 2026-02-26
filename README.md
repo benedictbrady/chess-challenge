@@ -2,7 +2,7 @@
 
 **Build the smallest neural network that can beat a strong chess engine.**
 
-Train an ONNX evaluation network and run it against a depth-5 alpha-beta baseline (~1700 Elo). Your net uses only 1-ply search — it evaluates every legal move one step ahead and picks the best. To pass, you must score **70% or higher across 50 games**. The winning submission is the one with the fewest parameters.
+Train an ONNX evaluation network and run it against an alpha-beta baseline (~1500-1600 Elo). Your net uses only 1-ply search — it evaluates every legal move one step ahead and picks the best. To pass, you must score **70% or higher across 50 games**. The winning submission is the one with the fewest parameters.
 
 ---
 
@@ -13,8 +13,8 @@ Can a neural network's position understanding substitute for search depth?
 | | Baseline | Your NN |
 |---|---|---|
 | **Eval** | Handcrafted (material, PSTs, king safety, passed pawns, mobility, pawn structure) | Learned (your ONNX model) |
-| **Search** | Alpha-beta depth 5 + quiescence | 1-ply (evaluate all legal moves, pick best) |
-| **Target Elo** | ~1600–1800 | Must beat baseline at 70% |
+| **Search** | Alpha-beta depth 4 + quiescence | 1-ply (evaluate all legal moves, pick best) |
+| **Target Elo** | ~1500–1600 | Must beat baseline at 70% |
 
 The baseline sees 5 moves ahead with a handcrafted eval. Your network sees 1 move ahead but with (hopefully) a much stronger learned eval. Who wins?
 
@@ -154,7 +154,7 @@ Key insight: your network replaces the eval function, not the search. It needs t
 chess-challenge/
 ├── engine/              # Core library
 │   └── src/
-│       ├── bot.rs       # BaselineBot (depth 5, alpha-beta)
+│       ├── bot.rs       # BaselineBot (depth 4, alpha-beta + quiescence)
 │       ├── eval.rs      # Tapered eval: material, PSTs, king safety, passed pawns, mobility
 │       ├── game.rs      # GameState, move generation, repetition detection
 │       ├── nn.rs        # NnEvalBot: ONNX eval inference, board encoding
