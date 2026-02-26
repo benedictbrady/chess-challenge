@@ -1,17 +1,17 @@
-/// Competition runner: pit an ONNX eval network (1-ply search) against a strong baseline.
+/// Competition runner: pit an ONNX eval network against baseline bots at multiple levels.
 ///
 /// Usage:
-///   compete <model.onnx> [--openings <path>] [--json-output <path>]
+///   compete <model.onnx> [--level N] [--openings <path>] [--json-output <path>]
 ///
-/// The NN plays 50 games (25 positions × 2 colors) against the baseline bot.
-/// Scoring: 1 for win, 0.5 for draw, 0 for loss. Must reach 70% (35/50 points).
+/// The NN plays 50 games (25 positions x 2 colors) per level against increasingly
+/// strong baselines. Scoring: 1 for win, 0.5 for draw, 0 for loss. Must reach 70%.
 /// Models with >10 000 000 parameters are rejected.
 
 use engine::bot::Bot;
 use engine::game::{GameState, Outcome};
 use engine::nn::count_parameters;
 use engine::openings::load_opening_fens;
-use engine::{BaselineBot, Color, Move, NnEvalBot, Piece};
+use engine::{BaselineBot, Color, Level, Move, NnEvalBot, Piece, ALL_LEVELS};
 use rand::seq::SliceRandom;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -301,6 +301,212 @@ fn score_outcome(outcome: &Outcome, nn_color: Color) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
+// Level result
+// ---------------------------------------------------------------------------
+
+struct LevelResult {
+    level: Level,
+    score: f64,
+    wins: usize,
+    draws: usize,
+    losses: usize,
+    passed: bool,
+    elapsed: std::time::Duration,
+    game_jsons: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Run a single level
+// ---------------------------------------------------------------------------
+
+fn run_level(
+    level: Level,
+    nn: &NnEvalBot,
+    positions: &[String],
+) -> LevelResult {
+    let baseline = BaselineBot::from_level(level);
+    let pass_points = (TOTAL_GAMES as f64 * PASS_THRESHOLD).ceil() as usize;
+
+    println!();
+    println!(
+        "\u{2550}\u{2550}\u{2550} Level {} \u{2014} {} \u{2550}\u{2550}\u{2550}",
+        level.value(),
+        level.name(),
+    );
+    println!("  {}", level.description());
+    println!("  Baseline: {}", baseline.description());
+    println!(
+        "  {} games, need {:.0}% = {}/{} points",
+        TOTAL_GAMES,
+        PASS_THRESHOLD * 100.0,
+        pass_points,
+        TOTAL_GAMES,
+    );
+    println!();
+
+    let mut diversity = DiversityTracker::new();
+    let mut total_score: f64 = 0.0;
+    let mut wins = 0usize;
+    let mut draws = 0usize;
+    let mut losses = 0usize;
+    let mut game_jsons: Vec<String> = Vec::new();
+
+    let timer = Instant::now();
+
+    for (pos_idx, fen) in positions.iter().enumerate() {
+        // Game A: NN=White vs Baseline=Black
+        baseline.reset();
+        let result_a = run_game(nn, &baseline, Some(fen), true);
+        diversity.record_game(&result_a.nn_moves);
+        let score_a = score_outcome(&result_a.outcome, Color::White);
+        total_score += score_a;
+        match score_a as u32 {
+            1 => wins += 1,
+            0 => losses += 1,
+            _ => draws += 1,
+        }
+        game_jsons.push(game_to_json(pos_idx, "white", score_a, &result_a));
+
+        // Game B: Baseline=White vs NN=Black
+        baseline.reset();
+        let result_b = run_game(&baseline, nn, Some(fen), false);
+        diversity.record_game(&result_b.nn_moves);
+        let score_b = score_outcome(&result_b.outcome, Color::Black);
+        total_score += score_b;
+        match score_b as u32 {
+            1 => wins += 1,
+            0 => losses += 1,
+            _ => draws += 1,
+        }
+        game_jsons.push(game_to_json(pos_idx, "black", score_b, &result_b));
+
+        let label_a = match score_a as u32 {
+            1 => "WIN ",
+            0 => "LOSS",
+            _ => "DRAW",
+        };
+        let label_b = match score_b as u32 {
+            1 => "WIN ",
+            0 => "LOSS",
+            _ => "DRAW",
+        };
+
+        println!(
+            "  Pos {:>2}/{}  W:{} ({}pl)  B:{} ({}pl)  running={:.1}/{:.0}",
+            pos_idx + 1,
+            NUM_POSITIONS,
+            label_a,
+            result_a.plies,
+            label_b,
+            result_b.plies,
+            total_score,
+            pass_points,
+        );
+    }
+
+    let elapsed = timer.elapsed();
+
+    diversity.report();
+
+    let passed = total_score >= pass_points as f64;
+    let pct = total_score / TOTAL_GAMES as f64 * 100.0;
+
+    println!();
+    if passed {
+        println!(
+            "  Level {} PASS \u{2713}  {:.1}/{} ({:.0}%) in {:.1}s",
+            level.value(),
+            total_score,
+            TOTAL_GAMES,
+            pct,
+            elapsed.as_secs_f64(),
+        );
+    } else {
+        println!(
+            "  Level {} FAIL \u{2717}  {:.1}/{} ({:.0}%) in {:.1}s",
+            level.value(),
+            total_score,
+            TOTAL_GAMES,
+            pct,
+            elapsed.as_secs_f64(),
+        );
+    }
+
+    LevelResult {
+        level,
+        score: total_score,
+        wins,
+        draws,
+        losses,
+        passed,
+        elapsed,
+        game_jsons,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scorecard
+// ---------------------------------------------------------------------------
+
+fn print_scorecard(results: &[LevelResult], param_count: u64) {
+    let best_level = results
+        .iter()
+        .rev()
+        .find(|r| r.passed)
+        .map(|r| r.level.value());
+
+    println!();
+    println!(
+        "\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}"
+    );
+    println!(
+        "                          SCORECARD"
+    );
+    println!(
+        "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}"
+    );
+    println!(
+        "  Level  Name            Score     Record      Result"
+    );
+    println!(
+        "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}"
+    );
+
+    for r in results {
+        let result_str = if r.passed { "PASS" } else { "FAIL" };
+        println!(
+            "    {}    {:<14}  {:>4.1}/{}   {:>2}W/{:>2}D/{:>2}L  {}",
+            r.level.value(),
+            r.level.name(),
+            r.score,
+            TOTAL_GAMES,
+            r.wins,
+            r.draws,
+            r.losses,
+            result_str,
+        );
+    }
+
+    println!();
+    println!("  Parameters: {}", format_num(param_count));
+
+    match best_level {
+        Some(lv) => println!(
+            "  Rating: Level {} / {} params",
+            lv,
+            format_num(param_count),
+        ),
+        None => println!("  Rating: no levels passed"),
+    }
+
+    let total_time: f64 = results.iter().map(|r| r.elapsed.as_secs_f64()).sum();
+    println!("  Time: {:.1}s total", total_time);
+    println!(
+        "\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -308,11 +514,17 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 || args[1] == "--help" || args[1] == "-h" {
-        eprintln!("Usage: compete <model.onnx> [--openings <path>] [--json-output <path>]");
+        eprintln!("Usage: compete <model.onnx> [--level N] [--openings <path>] [--json-output <path>]");
         eprintln!();
         eprintln!("  model.onnx            ONNX eval network (input: board [1,768], output: eval [1,1])");
+        eprintln!("  --level N             Run only level N (1-5). Omit to run all levels.");
         eprintln!("  --openings <path>     opening FEN file (default: data/openings.txt)");
         eprintln!("  --json-output <path>  write per-game JSON results to file (for server integration)");
+        eprintln!();
+        eprintln!("Levels:");
+        for lv in &ALL_LEVELS {
+            eprintln!("  {}  {:<14}  {}", lv.value(), lv.name(), lv.description());
+        }
         std::process::exit(1);
     }
 
@@ -320,20 +532,37 @@ fn main() {
 
     // Parse CLI flags
     let mut openings_path = String::from("data/openings.txt");
+    let mut single_level: Option<u8> = None;
     let mut json_output_path: Option<String> = None;
     {
         let mut i = 2;
         while i < args.len() {
-            if args[i] == "--openings" {
-                if let Some(val) = args.get(i + 1) {
-                    openings_path = val.clone();
-                    i += 1;
+            match args[i].as_str() {
+                "--openings" => {
+                    if let Some(val) = args.get(i + 1) {
+                        openings_path = val.clone();
+                        i += 1;
+                    }
                 }
-            } else if args[i] == "--json-output" {
-                if let Some(val) = args.get(i + 1) {
-                    json_output_path = Some(val.clone());
-                    i += 1;
+                "--level" => {
+                    if let Some(val) = args.get(i + 1) {
+                        match val.parse::<u8>() {
+                            Ok(n) if (1..=5).contains(&n) => single_level = Some(n),
+                            _ => {
+                                eprintln!("Error: --level must be 1-5");
+                                std::process::exit(1);
+                            }
+                        }
+                        i += 1;
+                    }
                 }
+                "--json-output" => {
+                    if let Some(val) = args.get(i + 1) {
+                        json_output_path = Some(val.clone());
+                        i += 1;
+                    }
+                }
+                _ => {}
             }
             i += 1;
         }
@@ -373,132 +602,53 @@ fn main() {
     let openings = load_openings_or_fallback(Path::new(&openings_path));
     let positions = select_positions(&openings, NUM_POSITIONS);
 
-    let baseline = BaselineBot::default();
-    let pass_points = (TOTAL_GAMES as f64 * PASS_THRESHOLD).ceil() as usize;
+    // Determine which levels to run
+    let levels: Vec<Level> = match single_level {
+        Some(n) => vec![Level::new(n).unwrap()],
+        None => ALL_LEVELS.to_vec(),
+    };
 
-    println!();
-    println!(
-        "Running {} games ({} positions \u{00d7} 2 colors, need {:.0}% = {}/{} points)\u{2026}",
-        TOTAL_GAMES,
-        NUM_POSITIONS,
-        PASS_THRESHOLD * 100.0,
-        pass_points,
-        TOTAL_GAMES,
-    );
-    println!("Baseline: {}", baseline.description());
+    // Run levels
+    let mut results: Vec<LevelResult> = Vec::new();
 
-    let mut diversity = DiversityTracker::new();
-    let mut total_score: f64 = 0.0;
-    let mut wins = 0usize;
-    let mut draws = 0usize;
-    let mut losses = 0usize;
-    let mut json_games: Vec<String> = Vec::new(); // JSON objects per game
+    for level in &levels {
+        let result = run_level(*level, &nn, &positions);
+        let failed = !result.passed;
+        results.push(result);
 
-    let timer = Instant::now();
-
-    for (pos_idx, fen) in positions.iter().enumerate() {
-        // Game A: NN=White vs Baseline=Black
-        baseline.reset();
-        let result_a = run_game(&nn, &baseline, Some(fen), true);
-        diversity.record_game(&result_a.nn_moves);
-        let score_a = score_outcome(&result_a.outcome, Color::White);
-        total_score += score_a;
-        match score_a as u32 {
-            1 => wins += 1,
-            0 => losses += 1,
-            _ => draws += 1,
+        // Early termination: if running all levels and this one failed, stop
+        if failed && single_level.is_none() {
+            println!();
+            println!("Stopping \u{2014} failed level {}, skipping harder levels.", level.value());
+            break;
         }
-        if json_output_path.is_some() {
-            json_games.push(game_to_json(pos_idx, "white", score_a, &result_a));
-        }
-
-        // Game B: Baseline=White vs NN=Black
-        baseline.reset();
-        let result_b = run_game(&baseline, &nn, Some(fen), false);
-        diversity.record_game(&result_b.nn_moves);
-        let score_b = score_outcome(&result_b.outcome, Color::Black);
-        total_score += score_b;
-        match score_b as u32 {
-            1 => wins += 1,
-            0 => losses += 1,
-            _ => draws += 1,
-        }
-        if json_output_path.is_some() {
-            json_games.push(game_to_json(pos_idx, "black", score_b, &result_b));
-        }
-
-        let label_a = match score_a as u32 {
-            1 => "WIN ",
-            0 => "LOSS",
-            _ => "DRAW",
-        };
-        let label_b = match score_b as u32 {
-            1 => "WIN ",
-            0 => "LOSS",
-            _ => "DRAW",
-        };
-
-        println!(
-            "Pos {:>2}/{}  W:{} ({}pl)  B:{} ({}pl)  running={:.1}/{:.0}",
-            pos_idx + 1,
-            NUM_POSITIONS,
-            label_a,
-            result_a.plies,
-            label_b,
-            result_b.plies,
-            total_score,
-            pass_points,
-        );
     }
 
-    let elapsed = timer.elapsed();
-
-    // Diversity report
-    diversity.report();
-
-    // Results summary
-    println!();
-    println!(
-        "\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}"
-    );
-    println!("             RESULTS SUMMARY");
-    println!(
-        "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}"
-    );
-    println!(
-        "  Score:  {:.1} / {} ({:.1}%)",
-        total_score,
-        TOTAL_GAMES,
-        total_score / TOTAL_GAMES as f64 * 100.0,
-    );
-    println!(
-        "  Record: {}W / {}D / {}L",
-        wins, draws, losses,
-    );
-    println!(
-        "  Completed {} games in {:.1}s ({:.1}s/game avg)",
-        TOTAL_GAMES,
-        elapsed.as_secs_f64(),
-        elapsed.as_secs_f64() / TOTAL_GAMES as f64,
-    );
-    println!(
-        "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}"
-    );
-    println!();
+    // Print scorecard
+    print_scorecard(&results, param_count);
 
     // Write JSON output if requested
     if let Some(ref path) = json_output_path {
+        let best_level = results.iter().rev().find(|r| r.passed).map(|r| r.level.value());
+        let levels_json: Vec<String> = results.iter().map(|r| {
+            format!(
+                "{{\"level\":{},\"name\":\"{}\",\"score\":{:.1},\"score_pct\":{:.1},\"wins\":{},\"draws\":{},\"losses\":{},\"passed\":{},\"games\":[{}]}}",
+                r.level.value(),
+                r.level.name(),
+                r.score,
+                r.score / TOTAL_GAMES as f64 * 100.0,
+                r.wins,
+                r.draws,
+                r.losses,
+                if r.passed { "true" } else { "false" },
+                r.game_jsons.join(","),
+            )
+        }).collect();
         let json_content = format!(
-            "{{\n  \"param_count\": {},\n  \"score\": {:.1},\n  \"score_pct\": {:.1},\n  \"wins\": {},\n  \"draws\": {},\n  \"losses\": {},\n  \"total_games\": {},\n  \"passed\": {},\n  \"games\": [\n    {}\n  ]\n}}",
+            "{{\n  \"param_count\": {},\n  \"best_level\": {},\n  \"levels\": [\n    {}\n  ]\n}}",
             param_count,
-            total_score,
-            total_score / TOTAL_GAMES as f64 * 100.0,
-            wins,
-            draws,
-            losses,
-            TOTAL_GAMES,
-            if total_score >= pass_points as f64 { "true" } else { "false" },
-            json_games.join(",\n    "),
+            best_level.map_or("null".to_string(), |l| l.to_string()),
+            levels_json.join(",\n    "),
         );
         match std::fs::File::create(path) {
             Ok(mut f) => {
@@ -510,25 +660,11 @@ fn main() {
         }
     }
 
-    let passed = total_score >= pass_points as f64;
-
-    if passed {
-        println!(
-            "PASS \u{2713}  \u{2014} scored {:.1}/{} ({:.0}% >= {:.0}%)",
-            total_score,
-            TOTAL_GAMES,
-            total_score / TOTAL_GAMES as f64 * 100.0,
-            PASS_THRESHOLD * 100.0,
-        );
+    // Exit code: 0 if any level passed, 1 if none
+    let any_passed = results.iter().any(|r| r.passed);
+    if any_passed {
         std::process::exit(0);
     } else {
-        println!(
-            "FAIL \u{2717}  \u{2014} scored {:.1}/{} ({:.0}% < {:.0}%)",
-            total_score,
-            TOTAL_GAMES,
-            total_score / TOTAL_GAMES as f64 * 100.0,
-            PASS_THRESHOLD * 100.0,
-        );
         std::process::exit(1);
     }
 }
