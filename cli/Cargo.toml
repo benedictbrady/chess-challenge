@@ -19,6 +19,10 @@ path = "src/compete.rs"
 name = "benchmark"
 path = "src/benchmark.rs"
 
+[[bin]]
+name = "play-move"
+path = "src/play_move.rs"
+
 [dependencies]
 engine = { path = "../engine" }
 rand = "0.8"
