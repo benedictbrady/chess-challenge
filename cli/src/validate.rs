@@ -538,7 +538,7 @@ fn main() {
         "  BaselineBot ELO Validation  (vs Stockfish 18, {} games per level)",
         n_games
     );
-    println!("  {}", BaselineBot::description());
+    println!("  {}", bot.description());
     println!(
         "  Config: depth={}, window={}cp, blunder_rate={}%",
         bot.depth,
