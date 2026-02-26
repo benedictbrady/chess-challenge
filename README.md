@@ -136,44 +136,6 @@ cargo run -p cli --bin validate -- --games 50
 
 ---
 
-## Training Tips
-
-An eval net needs strong positional understanding to compensate for only 1-ply of search. Some approaches:
-
-- **Supervised on Stockfish evals** — generate positions, label each with Stockfish's centipawn evaluation. Train your net to predict the eval. This gives clean scalar signal aligned with what you need.
-- **Supervised on game outcomes** — train on the [Lichess open database](https://database.lichess.org/), filtering to games ≥2000 Elo. Label positions with the game result (+1/0/-1). A small MLP trained for a few hours on a GPU can learn good positional understanding.
-- **Self-play RL** — train a value network via self-play. Expensive but can exceed hand-tuned evals.
-
-Key insight: your network replaces the eval function, not the search. It needs to answer "who is winning in this position?" rather than "what is the best move?"
-
----
-
-## Repository Layout
-
-```
-chess-challenge/
-├── engine/              # Core library
-│   └── src/
-│       ├── bot.rs       # BaselineBot (depth 4, alpha-beta + quiescence)
-│       ├── eval.rs      # Tapered eval: material, PSTs, king safety, passed pawns, mobility
-│       ├── game.rs      # GameState, move generation, repetition detection
-│       ├── nn.rs        # NnEvalBot: ONNX eval inference, board encoding
-│       ├── openings.rs  # Opening book loader
-│       └── search.rs    # Negamax + alpha-beta pruning + quiescence search
-├── cli/                 # Command-line tools
-│   └── src/
-│       ├── main.rs      # Human vs bot (ASCII board)
-│       ├── compete.rs   # Competition runner (50 games, 70% threshold)
-│       └── validate.rs  # Elo validation vs Stockfish
-├── gui/                 # egui desktop GUI (human play + watch mode)
-├── models/              # Reference ONNX model
-│   └── capture_policy.onnx
-└── data/
-    └── openings.txt     # ~50 opening positions
-```
-
----
-
 ## License
 
 MIT
