@@ -9,15 +9,10 @@
 /// where S is the bot's score (win=1, draw=0.5, loss=0).
 ///
 /// Usage:
-///   validate [--games N] [--openings <path>] [--bot <name>] [--all]
-///
-///   --bot <name>   Benchmark a single named challenger (e.g. Grunt, Wall)
-///   --all          Benchmark all 5 challengers and print summary table
-///   (no flags)     Benchmark the default BaselineBot
+///   validate [--games N] [--openings <path>]
 use engine::bot::{BaselineBot, Bot};
 use engine::game::{GameState, Outcome};
 use engine::openings::load_opening_fens;
-use engine::{challenger_by_name, CHALLENGERS};
 use engine::{Color, File, Move, Piece, Rank, Square};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
@@ -25,28 +20,24 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
 const STOCKFISH_PATH: &str = "/tmp/stockfish/stockfish-macos-m1-apple-silicon";
-const MOVETIME_MS: u32 = 100; // ms per Stockfish move (fast for testing)
+const MOVETIME_MS: u32 = 500; // ms per Stockfish move
 const MAX_HALFMOVES: usize = 300;
 const DEFAULT_GAMES: usize = 100;
 const DEFAULT_OPENINGS_PATH: &str = "data/openings.txt";
-const TARGET_LO: f64 = 1000.0;
-const TARGET_HI: f64 = 1200.0;
+const TARGET_LO: f64 = 1400.0;
+const TARGET_HI: f64 = 1700.0;
 
 // ── CLI argument parsing ──────────────────────────────────────────────────────
 
 struct CliArgs {
     n_games: usize,
     openings_path: Option<String>,
-    bot_name: Option<String>,
-    all_bots: bool,
 }
 
 fn parse_args() -> CliArgs {
     let args: Vec<String> = std::env::args().collect();
     let mut n_games = DEFAULT_GAMES;
     let mut openings_path: Option<String> = None;
-    let mut bot_name: Option<String> = None;
-    let mut all_bots = false;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -71,18 +62,6 @@ fn parse_args() -> CliArgs {
                     std::process::exit(1);
                 }
             }
-            "--bot" => {
-                i += 1;
-                if i < args.len() {
-                    bot_name = Some(args[i].clone());
-                } else {
-                    eprintln!("--bot requires a name");
-                    std::process::exit(1);
-                }
-            }
-            "--all" => {
-                all_bots = true;
-            }
             other => {
                 eprintln!("Unknown argument: {}", other);
                 std::process::exit(1);
@@ -93,8 +72,6 @@ fn parse_args() -> CliArgs {
     CliArgs {
         n_games,
         openings_path,
-        bot_name,
-        all_bots,
     }
 }
 
@@ -153,7 +130,6 @@ impl StockfishProcess {
         }
     }
 
-    /// Ask Stockfish for a move given the move history from startpos.
     fn get_move(&mut self, move_history: &[Move]) -> Option<Move> {
         let moves_str: Vec<String> = move_history.iter().map(|m| uci_move(*m)).collect();
         let pos_cmd = if moves_str.is_empty() {
@@ -176,7 +152,6 @@ impl StockfishProcess {
         }
     }
 
-    /// Ask Stockfish for a move given a starting FEN and the move history from that position.
     fn get_move_from_fen(&mut self, fen: &str, move_history: &[Move]) -> Option<Move> {
         let moves_str: Vec<String> = move_history.iter().map(|m| uci_move(*m)).collect();
         let pos_cmd = if moves_str.is_empty() {
@@ -291,8 +266,6 @@ enum GameResult {
     Draw,
 }
 
-/// Play one game. `bot_is_white` determines color assignment.
-/// If `starting_fen` is provided, the game starts from that FEN; otherwise from startpos.
 fn play_one_game(
     bot: &BaselineBot,
     sf: &mut StockfishProcess,
@@ -324,7 +297,6 @@ fn play_one_game(
                 None => break,
             }
         } else {
-            // Use FEN-based position command when we have a starting FEN
             match starting_fen {
                 Some(fen) => sf.get_move_from_fen(fen, &game.history),
                 None => sf.get_move(&game.history),
@@ -361,9 +333,6 @@ fn elo_from_score(score: f64, opp_elo: f64) -> f64 {
     opp_elo + 400.0 * (clamped / (1.0 - clamped)).log10()
 }
 
-// ── Confidence interval ───────────────────────────────────────────────────────
-
-/// Compute 95% confidence interval bounds on Elo given a score and number of games.
 fn elo_confidence_interval(score: f64, n: u32, opp_elo: f64) -> (f64, f64) {
     let se = (score * (1.0 - score) / n as f64).sqrt();
     let score_lo = (score - 1.96 * se).clamp(0.001, 0.999);
@@ -475,22 +444,20 @@ fn load_openings_or_empty(path_override: &Option<String>) -> Vec<String> {
     }
 }
 
-// ── Benchmark a single bot ───────────────────────────────────────────────────
+// ── Benchmark ───────────────────────────────────────────────────────────────
 
 struct BenchmarkResult {
-    name: String,
     weighted_elo: f64,
     ci_lo: f64,
     ci_hi: f64,
 }
 
 fn benchmark_bot(
-    name: &str,
     bot: &BaselineBot,
     n_games: usize,
     openings: &[String],
 ) -> BenchmarkResult {
-    let levels = [1320u32, 1400, 1500, 1600];
+    let levels = [1320u32, 1500, 1700, 1900, 2100];
     let mut results: Vec<(u32, MatchResult)> = Vec::new();
 
     for &sf_elo in &levels {
@@ -551,7 +518,6 @@ fn benchmark_bot(
     let (ci_lo, ci_hi) = elo_confidence_interval(agg_score, total_games, agg_opp_elo);
 
     BenchmarkResult {
-        name: name.to_string(),
         weighted_elo,
         ci_lo,
         ci_hi,
@@ -565,157 +531,48 @@ fn main() {
     let n_games = cli.n_games;
     let openings = load_openings_or_empty(&cli.openings_path);
 
-    if cli.all_bots {
-        // Benchmark all 5 challengers
-        println!("═══════════════════════════════════════════════════════════════════");
-        println!(
-            "  Challenger Fleet ELO Validation  (vs Stockfish 18, {} games per level)",
-            n_games
-        );
-        println!("  Target range: {:.0}–{:.0} Elo", TARGET_LO, TARGET_HI);
-        println!("  Stockfish movetime: {}ms/move", MOVETIME_MS);
-        if !openings.is_empty() {
-            println!(
-                "  Opening book: {} positions (each played as both colors)",
-                openings.len()
-            );
-        }
-        println!("═══════════════════════════════════════════════════════════════════");
-        println!();
+    let bot = BaselineBot::default();
 
-        let mut all_results: Vec<BenchmarkResult> = Vec::new();
-
-        for challenger in CHALLENGERS {
-            println!(
-                "── {} ── {}",
-                challenger.name, challenger.description
-            );
-            let bot = challenger.to_bot();
-            let result = benchmark_bot(challenger.name, &bot, n_games, &openings);
-            all_results.push(result);
-            println!();
-        }
-
-        // Summary table
-        println!("  Summary");
-        for r in &all_results {
-            let verdict = if r.weighted_elo < TARGET_LO {
-                "TOO LOW"
-            } else if r.weighted_elo > TARGET_HI {
-                "TOO HIGH"
-            } else {
-                "IN RANGE"
-            };
-            println!(
-                "  {:<12} ~{:4.0}  [{:.0}..{:.0}]  {}",
-                r.name, r.weighted_elo, r.ci_lo, r.ci_hi, verdict
-            );
-        }
-    } else if let Some(ref name) = cli.bot_name {
-        // Benchmark a single named challenger
-        let challenger = match challenger_by_name(name) {
-            Some(c) => c,
-            None => {
-                eprintln!("Unknown challenger: {}", name);
-                eprintln!(
-                    "Available: {}",
-                    CHALLENGERS
-                        .iter()
-                        .map(|c| c.name)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-                std::process::exit(1);
-            }
-        };
-
-        println!("═══════════════════════════════════════════════════════════════════");
+    println!("\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}");
+    println!(
+        "  BaselineBot ELO Validation  (vs Stockfish 18, {} games per level)",
+        n_games
+    );
+    println!("  {}", BaselineBot::description());
+    println!(
+        "  Config: depth={}, window={}cp, blunder_rate={}%",
+        bot.depth,
+        bot.candidate_window,
+        (bot.blunder_rate * 100.0) as u32
+    );
+    println!("  Target range: {:.0}\u{2013}{:.0} Elo", TARGET_LO, TARGET_HI);
+    println!("  Stockfish movetime: {}ms/move", MOVETIME_MS);
+    if !openings.is_empty() {
         println!(
-            "  {} ELO Validation  (vs Stockfish 18, {} games per level)",
-            challenger.name, n_games
+            "  Opening book: {} positions (each played as both colors)",
+            openings.len()
         );
-        println!("  {}", challenger.description);
-        println!("  Stockfish movetime: {}ms/move", MOVETIME_MS);
-        if !openings.is_empty() {
-            println!(
-                "  Opening book: {} positions (each played as both colors)",
-                openings.len()
-            );
-        }
-        println!("═══════════════════════════════════════════════════════════════════");
-        println!();
-
-        let bot = challenger.to_bot();
-        let result = benchmark_bot(challenger.name, &bot, n_games, &openings);
-
-        println!();
-        let verdict = if result.weighted_elo < TARGET_LO {
-            "TOO LOW"
-        } else if result.weighted_elo > TARGET_HI {
-            "TOO HIGH"
-        } else {
-            "IN RANGE"
-        };
-        println!(
-            "  {}: ~{:.0} Elo  [{:.0}..{:.0}]  {}",
-            result.name, result.weighted_elo, result.ci_lo, result.ci_hi, verdict
-        );
-    } else {
-        // Default: benchmark the default BaselineBot (backwards compatible)
-        let bot = BaselineBot::default();
-
-        println!("═══════════════════════════════════════════════════════════════════");
-        println!(
-            "  BaselineBot ELO Validation  (vs Stockfish 18, {} games per level)",
-            n_games
-        );
-        println!(
-            "  BaselineBot: depth={}, window={}cp, blunder_rate={}%",
-            bot.depth,
-            bot.candidate_window,
-            (bot.blunder_rate * 100.0) as u32
-        );
-        println!("  Stockfish movetime: {}ms/move", MOVETIME_MS);
-        if !openings.is_empty() {
-            println!(
-                "  Opening book: {} positions (each played as both colors)",
-                openings.len()
-            );
-        }
-        println!("═══════════════════════════════════════════════════════════════════");
-        println!();
-
-        let result = benchmark_bot("BaselineBot", &bot, n_games, &openings);
-
-        println!();
-        println!(
-            "  \u{250c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}"
-        );
-        println!(
-            "  \u{2502} Weighted Elo estimate: {:5.0}  [{:.0}..{:.0}]               \u{2502}",
-            result.weighted_elo, result.ci_lo, result.ci_hi
-        );
-        println!(
-            "  \u{2502} Target range:          900-1100                              \u{2502}"
-        );
-        let verdict = if result.weighted_elo < 800.0 {
-            "Too weak"
-        } else if result.weighted_elo < 950.0 {
-            "Slightly below -- minor tuning needed"
-        } else if result.weighted_elo <= 1150.0 {
-            "On target for ~1000 ELO"
-        } else {
-            "Above target -- reduce randomness or depth"
-        };
-        println!("  \u{2502} Verdict: {:<54}\u{2502}", verdict);
-        println!(
-            "  \u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}"
-        );
-        println!();
-        println!("  Note: Stockfish ELO is calibrated; these estimates are reliable");
-        println!(
-            "  when the bot's score is between 15% and 85% against an opponent."
-        );
-        println!("  Scores outside that range saturate the formula.");
     }
+    println!("\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}");
+    println!();
+
+    let result = benchmark_bot(&bot, n_games, &openings);
+
+    println!();
+    let verdict = if result.weighted_elo < TARGET_LO {
+        "BELOW TARGET \u{2014} try increasing depth"
+    } else if result.weighted_elo > TARGET_HI {
+        "ABOVE TARGET \u{2014} try reducing depth"
+    } else {
+        "IN RANGE"
+    };
+    println!(
+        "  Weighted Elo: ~{:.0}  [{:.0}..{:.0}]  {}",
+        result.weighted_elo, result.ci_lo, result.ci_hi, verdict
+    );
+    println!();
+    println!("  Note: Stockfish ELO is calibrated; these estimates are reliable");
+    println!(
+        "  when the bot's score is between 15% and 85% against an opponent."
+    );
 }

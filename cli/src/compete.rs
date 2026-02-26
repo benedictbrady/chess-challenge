@@ -1,29 +1,27 @@
-/// Competition runner: pit an ONNX policy network against a fleet of 5 challenger bots.
+/// Competition runner: pit an ONNX eval network (1-ply search) against a strong baseline.
 ///
 /// Usage:
-///   compete <model.onnx> [--games-per-bot N] [--openings <path>]
+///   compete <model.onnx> [--openings <path>]
 ///
-/// The NN plays N games against each of 5 challengers (default 5, total 25 games).
-/// It must win at least 3/N against each opponent to pass. Draws count as losses.
+/// The NN plays 50 games (25 positions × 2 colors) against the baseline bot.
+/// Scoring: 1 for win, 0.5 for draw, 0 for loss. Must reach 70% (35/50 points).
 /// Models with >10 000 000 parameters are rejected.
-///
-/// --openings <path>  Load opening FENs from file (default: data/openings.txt).
-///                    Each bot faces different openings via offset into the book.
-///                    Games are paired: games (0,1) share an opening (NN plays both
-///                    colors), games (2,3) share another, game 4 gets its own.
 
 use engine::bot::Bot;
 use engine::game::{GameState, Outcome};
 use engine::nn::count_parameters;
 use engine::openings::load_opening_fens;
-use engine::{Color, Move, NnBot, Piece, CHALLENGERS};
+use engine::{BaselineBot, Color, Move, NnEvalBot, Piece};
+use rand::seq::SliceRandom;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::time::Instant;
 
 const MAX_PARAMS: u64 = 10_000_000;
-const MAX_PLIES: usize = 500; // safety valve against infinite games
-const DEFAULT_GAMES_PER_BOT: usize = 5;
-const WINS_REQUIRED_FRACTION_NUM: usize = 3; // need 3 out of 5
+const MAX_PLIES: usize = 500;
+const NUM_POSITIONS: usize = 25;
+const TOTAL_GAMES: usize = 50; // NUM_POSITIONS * 2
+const PASS_THRESHOLD: f64 = 0.70;
 
 // ---------------------------------------------------------------------------
 // Move formatting (UCI style)
@@ -44,15 +42,10 @@ fn format_move(mv: Move) -> String {
 // Diversity tracking
 // ---------------------------------------------------------------------------
 
-/// Collects NN move statistics across all games for diversity reporting.
 struct DiversityTracker {
-    /// Every NN move played, formatted as UCI string.
     all_nn_moves: Vec<String>,
-    /// The first NN move in each game (UCI string).
     first_moves: Vec<String>,
-    /// The first 4 NN moves per game, joined as a sequence string.
     four_move_seqs: Vec<String>,
-    /// Total games tracked.
     total_games: usize,
 }
 
@@ -66,7 +59,6 @@ impl DiversityTracker {
         }
     }
 
-    /// Record NN moves from a single game.
     fn record_game(&mut self, nn_moves: &[String]) {
         self.total_games += 1;
 
@@ -80,12 +72,10 @@ impl DiversityTracker {
         self.all_nn_moves.extend(nn_moves.iter().cloned());
     }
 
-    /// Print the diversity report.
     fn report(&self) {
         println!();
         println!("--- Playing Diversity ---");
 
-        // 1. First-move diversity
         let distinct_first: HashSet<&str> = self.first_moves.iter().map(|s| s.as_str()).collect();
         let mut sorted_first: Vec<&str> = distinct_first.iter().copied().collect();
         sorted_first.sort();
@@ -95,7 +85,6 @@ impl DiversityTracker {
             sorted_first.join(", "),
         );
 
-        // 2. Opening sequence diversity (first 4 NN moves)
         let distinct_seqs: HashSet<&str> =
             self.four_move_seqs.iter().map(|s| s.as_str()).collect();
         println!(
@@ -104,7 +93,6 @@ impl DiversityTracker {
             self.total_games,
         );
 
-        // 3. Move entropy (Shannon entropy over NN move distribution)
         let entropy = self.move_entropy();
         println!("Move entropy:        {:.1} bits", entropy);
     }
@@ -133,10 +121,6 @@ impl DiversityTracker {
 // Game runner
 // ---------------------------------------------------------------------------
 
-/// Run a single game, optionally from a starting FEN.
-/// Returns (outcome, ply_count, list_of_nn_moves_as_uci_strings).
-///
-/// `nn_is_white` tells us which side is the NN so we can track its moves.
 fn run_game(
     white: &dyn Bot,
     black: &dyn Bot,
@@ -195,11 +179,9 @@ fn run_game(
 }
 
 // ---------------------------------------------------------------------------
-// Opening loading
+// Opening loading & position selection
 // ---------------------------------------------------------------------------
 
-/// Load openings from the given path, falling back to no openings if the file
-/// is missing (games will start from the standard position).
 fn load_openings_or_fallback(path: &Path) -> Vec<String> {
     match load_opening_fens(path) {
         Ok(fens) => {
@@ -213,46 +195,50 @@ fn load_openings_or_fallback(path: &Path) -> Vec<String> {
     }
 }
 
-/// Given a game index within a bot's set, a bot offset, and the list of opening FENs,
-/// return the FEN to use.
-/// Games are paired: (0,1) share opening 0, (2,3) share opening 1, etc.
-/// Each bot uses a different offset into the book for diversity.
-fn opening_for_game(
-    game_idx: usize,
-    bot_offset: usize,
-    openings: &[String],
-) -> Option<&str> {
+/// Randomly sample `n` positions without replacement (cycles if fewer available).
+fn select_positions(openings: &[String], n: usize) -> Vec<String> {
     if openings.is_empty() {
-        return None;
+        return vec!["rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(); n];
     }
-    let opening_idx = (bot_offset + game_idx / 2) % openings.len();
-    Some(openings[opening_idx].as_str())
+
+    let mut rng = rand::thread_rng();
+
+    if openings.len() >= n {
+        // Sample without replacement
+        let mut indices: Vec<usize> = (0..openings.len()).collect();
+        indices.shuffle(&mut rng);
+        indices.truncate(n);
+        indices.iter().map(|&i| openings[i].clone()).collect()
+    } else {
+        // Cycle through available openings
+        let mut result = Vec::with_capacity(n);
+        let mut pool: Vec<usize> = Vec::new();
+        while result.len() < n {
+            if pool.is_empty() {
+                pool = (0..openings.len()).collect();
+                pool.shuffle(&mut rng);
+            }
+            result.push(openings[pool.pop().unwrap()].clone());
+        }
+        result
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Per-opponent result tracking
+// Scoring
 // ---------------------------------------------------------------------------
 
-struct OpponentResult {
-    name: &'static str,
-    wins: usize,
-    losses: usize,
-    draws: usize,
-    games_per_bot: usize,
-}
-
-impl OpponentResult {
-    fn passed(&self) -> bool {
-        let wins_needed = wins_required(self.games_per_bot);
-        self.wins >= wins_needed
+fn score_outcome(outcome: &Outcome, nn_color: Color) -> f64 {
+    match outcome {
+        Outcome::Checkmate { winner } => {
+            if *winner == nn_color {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        Outcome::Draw => 0.5,
     }
-}
-
-/// Calculate wins required: 3 out of 5 (scales: ceil(games * 3/5))
-fn wins_required(games_per_bot: usize) -> usize {
-    // For 5 games: 3. For other values: ceil(games * 3 / 5)
-    (games_per_bot * WINS_REQUIRED_FRACTION_NUM + DEFAULT_GAMES_PER_BOT - 1)
-        / DEFAULT_GAMES_PER_BOT
 }
 
 // ---------------------------------------------------------------------------
@@ -263,17 +249,9 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 || args[1] == "--help" || args[1] == "-h" {
-        eprintln!(
-            "Usage: compete <model.onnx> [--games-per-bot N] [--openings <path>]"
-        );
+        eprintln!("Usage: compete <model.onnx> [--openings <path>]");
         eprintln!();
-        eprintln!("  model.onnx          ONNX policy network (input: board [1,768], output: policy [1,4096])");
-        eprintln!(
-            "  --games-per-bot N   games per opponent (default: {}, must win {}/{})",
-            DEFAULT_GAMES_PER_BOT,
-            wins_required(DEFAULT_GAMES_PER_BOT),
-            DEFAULT_GAMES_PER_BOT
-        );
+        eprintln!("  model.onnx          ONNX eval network (input: board [1,768], output: eval [1,1])");
         eprintln!("  --openings <path>   opening FEN file (default: data/openings.txt)");
         std::process::exit(1);
     }
@@ -281,35 +259,21 @@ fn main() {
     let model_path = Path::new(&args[1]);
 
     // Parse CLI flags
-    let mut games_per_bot: usize = DEFAULT_GAMES_PER_BOT;
     let mut openings_path = String::from("data/openings.txt");
-
     {
         let mut i = 2;
         while i < args.len() {
-            match args[i].as_str() {
-                "--games-per-bot" => {
-                    if let Some(val) = args.get(i + 1).and_then(|s| s.parse().ok()) {
-                        games_per_bot = val;
-                        i += 1;
-                    }
+            if args[i] == "--openings" {
+                if let Some(val) = args.get(i + 1) {
+                    openings_path = val.clone();
+                    i += 1;
                 }
-                "--openings" => {
-                    if let Some(val) = args.get(i + 1) {
-                        openings_path = val.clone();
-                        i += 1;
-                    }
-                }
-                _ => {}
             }
             i += 1;
         }
     }
 
-    let total_games = games_per_bot * CHALLENGERS.len();
-    let wins_needed = wins_required(games_per_bot);
-
-    // Count parameters before loading the session (fast file parse)
+    // Count parameters before loading the session
     println!("Loading: {}", model_path.display());
     let param_count = match count_parameters(model_path) {
         Ok(n) => n,
@@ -330,8 +294,8 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Now load the ONNX Runtime session
-    let nn = match NnBot::load(model_path) {
+    // Load the ONNX Runtime session
+    let nn = match NnEvalBot::load(model_path) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Failed to load model: {e}");
@@ -339,97 +303,84 @@ fn main() {
         }
     };
 
-    // Load openings
+    // Load openings and select positions
     let openings = load_openings_or_fallback(Path::new(&openings_path));
+    let positions = select_positions(&openings, NUM_POSITIONS);
+
+    let baseline = BaselineBot::default();
+    let pass_points = (TOTAL_GAMES as f64 * PASS_THRESHOLD).ceil() as usize;
 
     println!();
     println!(
-        "Running {} games ({} per opponent \u{00d7} {} opponents, need {}/{} wins each)\u{2026}",
-        total_games,
-        games_per_bot,
-        CHALLENGERS.len(),
-        wins_needed,
-        games_per_bot,
+        "Running {} games ({} positions \u{00d7} 2 colors, need {:.0}% = {}/{} points)\u{2026}",
+        TOTAL_GAMES,
+        NUM_POSITIONS,
+        PASS_THRESHOLD * 100.0,
+        pass_points,
+        TOTAL_GAMES,
     );
+    println!("Baseline: {}", BaselineBot::description());
 
     let mut diversity = DiversityTracker::new();
-    let mut opponent_results: Vec<OpponentResult> = Vec::new();
+    let mut total_score: f64 = 0.0;
+    let mut wins = 0usize;
+    let mut draws = 0usize;
+    let mut losses = 0usize;
 
-    for (bot_idx, challenger) in CHALLENGERS.iter().enumerate() {
-        println!();
-        println!("--- vs {} ---", challenger.name);
-        println!("    {}", challenger.description);
+    let timer = Instant::now();
 
-        let bot = challenger.to_bot();
-        let mut wins = 0usize;
-        let mut losses = 0usize;
-        let mut draws = 0usize;
-
-        // Each bot gets a different offset into the opening book
-        let bot_offset = bot_idx * ((games_per_bot + 1) / 2);
-
-        for game_idx in 0..games_per_bot {
-            let nn_is_white = game_idx % 2 == 0;
-            let fen = opening_for_game(game_idx, bot_offset, &openings);
-
-            let (outcome, plies, nn_moves) = if nn_is_white {
-                run_game(&nn, &bot, fen, true)
-            } else {
-                run_game(&bot, &nn, fen, false)
-            };
-
-            // Track diversity
-            diversity.record_game(&nn_moves);
-
-            let nn_color = if nn_is_white {
-                Color::White
-            } else {
-                Color::Black
-            };
-
-            let result_str = match outcome {
-                Outcome::Checkmate { winner } => {
-                    if winner == nn_color {
-                        wins += 1;
-                        "WIN "
-                    } else {
-                        losses += 1;
-                        "LOSS"
-                    }
-                }
-                Outcome::Draw => {
-                    draws += 1;
-                    "DRAW"
-                }
-            };
-
-            println!(
-                "Game {:>2}/{}  NN={}  {:4}  ({} plies)",
-                game_idx + 1,
-                games_per_bot,
-                if nn_is_white { "White" } else { "Black" },
-                result_str,
-                plies,
-            );
+    for (pos_idx, fen) in positions.iter().enumerate() {
+        // Game A: NN=White vs Baseline=Black
+        let (outcome_a, plies_a, nn_moves_a) =
+            run_game(&nn, &baseline, Some(fen), true);
+        diversity.record_game(&nn_moves_a);
+        let score_a = score_outcome(&outcome_a, Color::White);
+        total_score += score_a;
+        match score_a as u32 {
+            1 => wins += 1,
+            0 => losses += 1,
+            _ => draws += 1,
         }
 
-        let result = OpponentResult {
-            name: challenger.name,
-            wins,
-            losses,
-            draws,
-            games_per_bot,
-        };
-        let pass_str = if result.passed() { "PASS" } else { "FAIL" };
-        println!(
-            "    Result: {}W / {}L / {}D  {}",
-            wins, losses, draws, pass_str
-        );
+        // Game B: Baseline=White vs NN=Black
+        let (outcome_b, plies_b, nn_moves_b) =
+            run_game(&baseline, &nn, Some(fen), false);
+        diversity.record_game(&nn_moves_b);
+        let score_b = score_outcome(&outcome_b, Color::Black);
+        total_score += score_b;
+        match score_b as u32 {
+            1 => wins += 1,
+            0 => losses += 1,
+            _ => draws += 1,
+        }
 
-        opponent_results.push(result);
+        let result_a = match score_a as u32 {
+            1 => "WIN ",
+            0 => "LOSS",
+            _ => "DRAW",
+        };
+        let result_b = match score_b as u32 {
+            1 => "WIN ",
+            0 => "LOSS",
+            _ => "DRAW",
+        };
+
+        println!(
+            "Pos {:>2}/{}  W:{} ({}pl)  B:{} ({}pl)  running={:.1}/{:.0}",
+            pos_idx + 1,
+            NUM_POSITIONS,
+            result_a,
+            plies_a,
+            result_b,
+            plies_b,
+            total_score,
+            pass_points,
+        );
     }
 
-    // Playing diversity report (across all games)
+    let elapsed = timer.elapsed();
+
+    // Diversity report
     diversity.report();
 
     // Results summary
@@ -442,48 +393,44 @@ fn main() {
         "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}"
     );
     println!(
-        "  {:<12} {:>2}  {:>2}  {:>2}  Result",
-        "Opponent", "W", "L", "D"
+        "  Score:  {:.1} / {} ({:.1}%)",
+        total_score,
+        TOTAL_GAMES,
+        total_score / TOTAL_GAMES as f64 * 100.0,
     );
-
-    let mut opponents_passed = 0usize;
-    for r in &opponent_results {
-        let pass_str = if r.passed() { "PASS" } else { "FAIL" };
-        println!(
-            "  {:<12} {:>2}  {:>2}  {:>2}  {}",
-            r.name, r.wins, r.losses, r.draws, pass_str
-        );
-        if r.passed() {
-            opponents_passed += 1;
-        }
-    }
-
+    println!(
+        "  Record: {}W / {}D / {}L",
+        wins, draws, losses,
+    );
+    println!(
+        "  Completed {} games in {:.1}s ({:.1}s/game avg)",
+        TOTAL_GAMES,
+        elapsed.as_secs_f64(),
+        elapsed.as_secs_f64() / TOTAL_GAMES as f64,
+    );
     println!(
         "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}"
     );
-    println!(
-        "  Overall: {}/{} opponents defeated",
-        opponents_passed,
-        CHALLENGERS.len()
-    );
     println!();
 
-    let all_passed = opponent_results.iter().all(|r| r.passed());
+    let passed = total_score >= pass_points as f64;
 
-    if all_passed {
+    if passed {
         println!(
-            "PASS \u{2713}  \u{2014} beat all {} opponents ({}/{} each)!",
-            CHALLENGERS.len(),
-            wins_needed,
-            games_per_bot
+            "PASS \u{2713}  \u{2014} scored {:.1}/{} ({:.0}% >= {:.0}%)",
+            total_score,
+            TOTAL_GAMES,
+            total_score / TOTAL_GAMES as f64 * 100.0,
+            PASS_THRESHOLD * 100.0,
         );
         std::process::exit(0);
     } else {
         println!(
-            "FAIL \u{2717}  \u{2014} must beat all {} opponents ({}/{} each)",
-            CHALLENGERS.len(),
-            wins_needed,
-            games_per_bot
+            "FAIL \u{2717}  \u{2014} scored {:.1}/{} ({:.0}% < {:.0}%)",
+            total_score,
+            TOTAL_GAMES,
+            total_score / TOTAL_GAMES as f64 * 100.0,
+            PASS_THRESHOLD * 100.0,
         );
         std::process::exit(1);
     }

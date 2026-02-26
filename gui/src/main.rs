@@ -1,7 +1,7 @@
 use eframe::egui;
 use engine::bot::{Bot, BaselineBot};
 use engine::game::{GameState, Outcome};
-use engine::{Color, File, Move, NnBot, Piece, Rank, Square};
+use engine::{Color, File, Move, NnEvalBot, Piece, Rank, Square};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -89,8 +89,8 @@ impl eframe::App for ChessApp {
 
         egui::SidePanel::right("info_panel").min_width(200.0).show(ctx, |ui| {
             if self.bot_vs_bot {
-                ui.heading("NnBot vs BaselineBot");
-                ui.label("NnBot (White) · BaselineBot (Black)");
+                ui.heading("NnEvalBot vs BaselineBot");
+                ui.label("NnEvalBot (White) · BaselineBot (Black)");
             } else {
                 ui.heading("Chess Challenge");
             }
@@ -295,7 +295,7 @@ impl eframe::App for ChessApp {
 fn run_game_loop(
     shared: Arc<Mutex<SharedState>>,
     move_receiver: std::sync::mpsc::Receiver<Move>,
-    nn_bot: Option<NnBot>,
+    nn_bot: Option<NnEvalBot>,
     move_delay_ms: u64,
 ) {
     let spicy = BaselineBot::default();
@@ -315,7 +315,7 @@ fn run_game_loop(
                     if bot_vs_bot {
                         format!(
                             "{} wins by checkmate!",
-                            if winner == Color::White { "NnBot" } else { "BaselineBot" }
+                            if winner == Color::White { "NnEvalBot" } else { "BaselineBot" }
                         )
                     } else {
                         format!(
@@ -331,7 +331,7 @@ fn run_game_loop(
         }
 
         if bot_vs_bot {
-            let bot_name = if side == Color::White { "NnBot" } else { "BaselineBot" };
+            let bot_name = if side == Color::White { "NnEvalBot" } else { "BaselineBot" };
 
             {
                 let mut state = shared.lock().unwrap();
@@ -370,7 +370,7 @@ fn run_game_loop(
                     state.bot_thinking = false;
                     state.status_message = format!(
                         "{} wins (opponent resigned)",
-                        if winner == Color::White { "NnBot" } else { "BaselineBot" }
+                        if winner == Color::White { "NnEvalBot" } else { "BaselineBot" }
                     );
                     break;
                 }
@@ -442,13 +442,13 @@ fn main() -> eframe::Result<()> {
     let shared_clone = shared.clone();
     thread::spawn(move || {
         let nn_bot = if let Some(path) = nn_path {
-            match NnBot::load(&path) {
+            match NnEvalBot::load(&path) {
                 Ok(b) => {
-                    println!("Loaded NnBot from {}", path.display());
+                    println!("Loaded NnEvalBot from {}", path.display());
                     Some(b)
                 }
                 Err(e) => {
-                    eprintln!("Failed to load NnBot: {e}");
+                    eprintln!("Failed to load NnEvalBot: {e}");
                     shared_clone.lock().unwrap().status_message =
                         format!("Failed to load model: {e}");
                     return;
@@ -462,7 +462,7 @@ fn main() -> eframe::Result<()> {
     });
 
     let title = if bot_vs_bot {
-        "Chess Challenge — NnBot vs BaselineBot"
+        "Chess Challenge — NnEvalBot vs BaselineBot"
     } else {
         "Chess Challenge"
     };

@@ -18,4 +18,3 @@ path = "src/compete.rs"
 [dependencies]
 engine = { path = "../engine" }
 rand = "0.8"
-

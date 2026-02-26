@@ -1,24 +1,22 @@
 # Chess Challenge
 
-**Build the smallest neural network that can beat our chess bot fleet.**
+**Build the smallest neural network that can beat a strong chess engine.**
 
-Train an ONNX policy network and run it against 5 challenger bots. To pass, you must win at least **3 out of 5 games against every challenger**. The winning submission is the one with the fewest parameters.
+Train an ONNX evaluation network and run it against an alpha-beta baseline (~1500-1600 Elo). Your net uses only 1-ply search — it evaluates every legal move one step ahead and picks the best. To pass, you must score **70% or higher across 50 games**. The winning submission is the one with the fewest parameters.
 
 ---
 
-## The Fleet
+## The Challenge
 
-Your model faces 5 opponents built on the same negamax + alpha-beta engine with material and piece-square-table evaluation, each tuned differently:
+Can a neural network's position understanding substitute for search depth?
 
-| Challenger | Depth | Window | Blunder | Character |
-|------------|-------|--------|---------|-----------|
-| **Grunt** | 2 | 50cp | 10% | Shallow but principled. Misses deep tactics but doesn't give away free pieces often. |
-| **Fortress** | 3 | 0cp | 12% | Always plays the engine's best move when not blundering. Deterministic in good moves, unpredictable via blunders. |
-| **Scholar** | 4 | 40cp | 20% | Deep calculator — sees tactics your NN can't. High blunder rate brings Elo down. |
-| **Chaos** | 2 | 200cp | 8% | Extremely wide candidate window makes play highly unpredictable even without blunders. |
-| **Wall** | 3 | 60cp | 0% | Zero blunders. Must outplay on pure merit. Hardest of the five. |
+| | Baseline | Your NN |
+|---|---|---|
+| **Eval** | Handcrafted (material, PSTs, king safety, passed pawns, mobility, pawn structure) | Learned (your ONNX model) |
+| **Search** | Alpha-beta depth 4 + quiescence | 1-ply (evaluate all legal moves, pick best) |
+| **Target Elo** | ~1500–1600 | Must beat baseline at 70% |
 
-All challengers play roughly 1000–1200 Elo. Your model plays **without any search** — pure policy, no MCTS, no alpha-beta. The network must encode enough chess understanding to beat each opponent style.
+The baseline sees 5 moves ahead with a handcrafted eval. Your network sees 1 move ahead but with (hopefully) a much stronger learned eval. Who wins?
 
 ---
 
@@ -29,11 +27,13 @@ Your ONNX model must conform to this interface:
 | Tensor | Name | Shape | dtype |
 |--------|------|-------|-------|
 | Input  | `board` | `[1, 768]` | float32 |
-| Output | `policy` | `[1, 4096]` | float32 |
+| Output | (any) | `[1, 1]` | float32 |
+
+The output is a **scalar evaluation**: positive = good for side to move.
 
 ### Board Encoding
 
-The board is encoded as **12 binary planes x 64 squares = 768 floats**, always from the current player's perspective:
+The board is encoded as **12 binary planes × 64 squares = 768 floats**, always from the current player's perspective:
 
 | Channel | Contents |
 |---------|----------|
@@ -45,19 +45,22 @@ The board is encoded as **12 binary planes x 64 squares = 768 floats**, always f
 
 When it is Black's turn, ranks are flipped (a1↔a8) so the network always sees its own pawns advancing up the board. Files are not flipped.
 
-### Policy Encoding
+### How Your Model Is Used
 
-4096 raw logits, one per (from, to) square pair:
+For each move the NN makes:
+1. Generate all legal moves
+2. For each move, apply it to get a child position
+3. Encode all child positions as `[N, 768]` tensors (batched)
+4. Run one ONNX inference call → `[N, 1]` output
+5. Negate each eval (child is from opponent's perspective)
+6. Pick the move with the highest eval
 
-```
-index = from_square * 64 + to_square
-```
-
-Square indices use the same flipped coordinate system as the board input. The harness masks illegal moves to −∞, takes argmax, and auto-promotes pawns to Queen. The output does not need to be softmaxed.
+Checkmates are detected immediately (no NN needed). Draws evaluate to 0.0.
 
 ### ONNX Requirements
 
-- Input named `board`, output named `policy`
+- Input named `board`
+- Output can have any name (accessed by index)
 - `ir_version = 8`, opset 17 recommended
 - All weights stored as ONNX initializers (the harness counts parameters from these)
 - Max **10,000,000 parameters**
@@ -66,11 +69,11 @@ Square indices use the same flipped coordinate system as the board input. The ha
 
 ## Rules
 
-1. **25 games total** — 5 games against each of 5 challengers
-2. **Win 3/5 against every opponent** — draws count as losses
+1. **50 games total** — 25 opening positions × 2 colors (NN plays both sides)
+2. **Score 70% or higher** — win=1, draw=0.5, loss=0 (need 35/50 points)
 3. **10M parameter limit** — models exceeding this are rejected
 4. **Score = parameter count** — lower is better
-5. Games use openings from the book (`data/openings.txt`), with color alternation across the 5 games per opponent
+5. Games use openings from the book (`data/openings.txt`)
 
 ---
 
@@ -101,15 +104,9 @@ A reference model is included for testing the pipeline:
 cargo run -p cli --bin compete -- models/capture_policy.onnx
 ```
 
-This is a hand-crafted capture heuristic (~315K params) — it prefers moving to squares occupied by valuable opponent pieces. It won't pass the competition but verifies everything works end to end.
+This is a hand-crafted capture heuristic (~315K params) — it won't pass the competition but verifies the pipeline works end to end.
 
-You can also adjust games per opponent for quicker iteration:
-
-```bash
-cargo run -p cli --bin compete -- my_model.onnx --games-per-bot 3
-```
-
-### Play Against the Bots
+### Play Against the Bot
 
 ASCII terminal:
 ```bash
@@ -123,7 +120,7 @@ cargo run -p gui
 
 ### Watch Bot vs Bot
 
-Watch your model play against a challenger in the GUI:
+Watch your model play against the baseline in the GUI:
 ```bash
 cargo run -p gui -- models/capture_policy.onnx
 cargo run -p gui -- models/capture_policy.onnx --delay 300  # slower playback
@@ -131,22 +128,23 @@ cargo run -p gui -- models/capture_policy.onnx --delay 300  # slower playback
 
 ### Validate Bot Elo (vs Stockfish)
 
-Benchmark the challengers against Stockfish to verify they're in the target Elo range:
+Benchmark the baseline against Stockfish to verify it's in the target Elo range:
 
 ```bash
-cargo run -p cli --bin validate -- --all --games 50
-cargo run -p cli --bin validate -- --bot Wall --games 100
+cargo run -p cli --bin validate -- --games 50
 ```
 
 ---
 
 ## Training Tips
 
-A pure policy net needs to be roughly **1300+ Elo** to reliably beat all 5 challengers. Some approaches:
+An eval net needs strong positional understanding to compensate for only 1-ply of search. Some approaches:
 
-- **Supervised on human games** — train on the [Lichess open database](https://database.lichess.org/), filtering to games ≥1800 Elo. A small MLP or CNN trained for a few hours on a GPU should reach ~1400–1600.
-- **Supervised on engine evals** — generate positions labeled with Stockfish's best move. Cleaner signal than human games.
-- **Self-play RL** — AlphaZero-style training with MCTS. Expensive but can exceed human-level play.
+- **Supervised on Stockfish evals** — generate positions, label each with Stockfish's centipawn evaluation. Train your net to predict the eval. This gives clean scalar signal aligned with what you need.
+- **Supervised on game outcomes** — train on the [Lichess open database](https://database.lichess.org/), filtering to games ≥2000 Elo. Label positions with the game result (+1/0/-1). A small MLP trained for a few hours on a GPU can learn good positional understanding.
+- **Self-play RL** — train a value network via self-play. Expensive but can exceed hand-tuned evals.
+
+Key insight: your network replaces the eval function, not the search. It needs to answer "who is winning in this position?" rather than "what is the best move?"
 
 ---
 
@@ -156,16 +154,16 @@ A pure policy net needs to be roughly **1300+ Elo** to reliably beat all 5 chall
 chess-challenge/
 ├── engine/              # Core library
 │   └── src/
-│       ├── bot.rs       # BaselineBot, 5 challenger configs
-│       ├── eval.rs      # Material + piece-square-table evaluation
+│       ├── bot.rs       # BaselineBot (depth 4, alpha-beta + quiescence)
+│       ├── eval.rs      # Tapered eval: material, PSTs, king safety, passed pawns, mobility
 │       ├── game.rs      # GameState, move generation, repetition detection
-│       ├── nn.rs        # NnBot: ONNX inference, board encoding, parameter counting
+│       ├── nn.rs        # NnEvalBot: ONNX eval inference, board encoding
 │       ├── openings.rs  # Opening book loader
-│       └── search.rs    # Negamax + alpha-beta pruning
+│       └── search.rs    # Negamax + alpha-beta pruning + quiescence search
 ├── cli/                 # Command-line tools
 │   └── src/
 │       ├── main.rs      # Human vs bot (ASCII board)
-│       ├── compete.rs   # Competition runner
+│       ├── compete.rs   # Competition runner (50 games, 70% threshold)
 │       └── validate.rs  # Elo validation vs Stockfish
 ├── gui/                 # egui desktop GUI (human play + watch mode)
 ├── models/              # Reference ONNX model
