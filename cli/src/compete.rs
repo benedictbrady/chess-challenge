@@ -1,7 +1,7 @@
 /// Competition runner: pit an ONNX eval network (1-ply search) against a strong baseline.
 ///
 /// Usage:
-///   compete <model.onnx> [--openings <path>]
+///   compete <model.onnx> [--openings <path>] [--json-output <path>]
 ///
 /// The NN plays 50 games (25 positions × 2 colors) against the baseline bot.
 /// Scoring: 1 for win, 0.5 for draw, 0 for loss. Must reach 70% (35/50 points).
@@ -14,6 +14,7 @@ use engine::openings::load_opening_fens;
 use engine::{BaselineBot, Color, Move, NnEvalBot, Piece};
 use rand::seq::SliceRandom;
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 
@@ -118,6 +119,25 @@ impl DiversityTracker {
 }
 
 // ---------------------------------------------------------------------------
+// Move record (for JSON replay output)
+// ---------------------------------------------------------------------------
+
+struct MoveRecord {
+    uci: String,
+    fen: String,
+    side: String, // "white" or "black"
+}
+
+struct GameResult {
+    outcome: Outcome,
+    plies: usize,
+    nn_moves: Vec<String>,
+    starting_fen: String,
+    move_history: Vec<MoveRecord>,
+    reason: String,
+}
+
+// ---------------------------------------------------------------------------
 // Game runner
 // ---------------------------------------------------------------------------
 
@@ -126,29 +146,54 @@ fn run_game(
     black: &dyn Bot,
     starting_fen: Option<&str>,
     nn_is_white: bool,
-) -> (Outcome, usize, Vec<String>) {
-    let mut game = match starting_fen {
-        Some(fen) => match GameState::from_fen(fen) {
-            Ok(g) => g,
-            Err(e) => {
-                eprintln!("Warning: bad FEN ({e}), falling back to startpos");
-                GameState::new()
-            }
-        },
-        None => GameState::new(),
+) -> GameResult {
+    let default_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    let actual_fen = starting_fen.unwrap_or(default_fen);
+
+    let mut game = match GameState::from_fen(actual_fen) {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("Warning: bad FEN ({e}), falling back to startpos");
+            GameState::new()
+        }
     };
 
     let mut plies = 0;
     let mut nn_moves: Vec<String> = Vec::new();
+    let mut move_history: Vec<MoveRecord> = Vec::new();
 
     loop {
         if game.is_game_over() {
             let outcome = game.outcome().unwrap_or(Outcome::Draw);
-            return (outcome, plies, nn_moves);
+            let reason = match &outcome {
+                Outcome::Checkmate { .. } => "checkmate",
+                Outcome::Draw => {
+                    if game.is_threefold_repetition() {
+                        "repetition"
+                    } else {
+                        "draw"
+                    }
+                }
+            };
+            return GameResult {
+                outcome,
+                plies,
+                nn_moves,
+                starting_fen: actual_fen.to_string(),
+                move_history,
+                reason: reason.to_string(),
+            };
         }
 
         if plies >= MAX_PLIES {
-            return (Outcome::Draw, plies, nn_moves);
+            return GameResult {
+                outcome: Outcome::Draw,
+                plies,
+                nn_moves,
+                starting_fen: actual_fen.to_string(),
+                move_history,
+                reason: "max_plies".to_string(),
+            };
         }
 
         let side = game.side_to_move();
@@ -163,16 +208,30 @@ fn run_game(
 
         match mv {
             Some(mv) => {
+                let uci = format_move(mv);
+                let side_str = if side == Color::White { "white" } else { "black" };
                 if is_nn_turn {
-                    nn_moves.push(format_move(mv));
+                    nn_moves.push(uci.clone());
                 }
                 game.make_move(mv);
+                let fen = game.board.to_string();
+                move_history.push(MoveRecord {
+                    uci,
+                    fen,
+                    side: side_str.to_string(),
+                });
                 plies += 1;
             }
             None => {
-                // Bot returned None mid-game -> forfeit
                 let winner = !side;
-                return (Outcome::Checkmate { winner }, plies, nn_moves);
+                return GameResult {
+                    outcome: Outcome::Checkmate { winner },
+                    plies,
+                    nn_moves,
+                    starting_fen: actual_fen.to_string(),
+                    move_history,
+                    reason: "forfeit".to_string(),
+                };
             }
         }
     }
@@ -249,10 +308,11 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 || args[1] == "--help" || args[1] == "-h" {
-        eprintln!("Usage: compete <model.onnx> [--openings <path>]");
+        eprintln!("Usage: compete <model.onnx> [--openings <path>] [--json-output <path>]");
         eprintln!();
-        eprintln!("  model.onnx          ONNX eval network (input: board [1,768], output: eval [1,1])");
-        eprintln!("  --openings <path>   opening FEN file (default: data/openings.txt)");
+        eprintln!("  model.onnx            ONNX eval network (input: board [1,768], output: eval [1,1])");
+        eprintln!("  --openings <path>     opening FEN file (default: data/openings.txt)");
+        eprintln!("  --json-output <path>  write per-game JSON results to file (for server integration)");
         std::process::exit(1);
     }
 
@@ -260,12 +320,18 @@ fn main() {
 
     // Parse CLI flags
     let mut openings_path = String::from("data/openings.txt");
+    let mut json_output_path: Option<String> = None;
     {
         let mut i = 2;
         while i < args.len() {
             if args[i] == "--openings" {
                 if let Some(val) = args.get(i + 1) {
                     openings_path = val.clone();
+                    i += 1;
+                }
+            } else if args[i] == "--json-output" {
+                if let Some(val) = args.get(i + 1) {
+                    json_output_path = Some(val.clone());
                     i += 1;
                 }
             }
@@ -326,42 +392,47 @@ fn main() {
     let mut wins = 0usize;
     let mut draws = 0usize;
     let mut losses = 0usize;
+    let mut json_games: Vec<String> = Vec::new(); // JSON objects per game
 
     let timer = Instant::now();
 
     for (pos_idx, fen) in positions.iter().enumerate() {
         // Game A: NN=White vs Baseline=Black
         baseline.reset();
-        let (outcome_a, plies_a, nn_moves_a) =
-            run_game(&nn, &baseline, Some(fen), true);
-        diversity.record_game(&nn_moves_a);
-        let score_a = score_outcome(&outcome_a, Color::White);
+        let result_a = run_game(&nn, &baseline, Some(fen), true);
+        diversity.record_game(&result_a.nn_moves);
+        let score_a = score_outcome(&result_a.outcome, Color::White);
         total_score += score_a;
         match score_a as u32 {
             1 => wins += 1,
             0 => losses += 1,
             _ => draws += 1,
         }
+        if json_output_path.is_some() {
+            json_games.push(game_to_json(pos_idx, "white", score_a, &result_a));
+        }
 
         // Game B: Baseline=White vs NN=Black
         baseline.reset();
-        let (outcome_b, plies_b, nn_moves_b) =
-            run_game(&baseline, &nn, Some(fen), false);
-        diversity.record_game(&nn_moves_b);
-        let score_b = score_outcome(&outcome_b, Color::Black);
+        let result_b = run_game(&baseline, &nn, Some(fen), false);
+        diversity.record_game(&result_b.nn_moves);
+        let score_b = score_outcome(&result_b.outcome, Color::Black);
         total_score += score_b;
         match score_b as u32 {
             1 => wins += 1,
             0 => losses += 1,
             _ => draws += 1,
         }
+        if json_output_path.is_some() {
+            json_games.push(game_to_json(pos_idx, "black", score_b, &result_b));
+        }
 
-        let result_a = match score_a as u32 {
+        let label_a = match score_a as u32 {
             1 => "WIN ",
             0 => "LOSS",
             _ => "DRAW",
         };
-        let result_b = match score_b as u32 {
+        let label_b = match score_b as u32 {
             1 => "WIN ",
             0 => "LOSS",
             _ => "DRAW",
@@ -371,10 +442,10 @@ fn main() {
             "Pos {:>2}/{}  W:{} ({}pl)  B:{} ({}pl)  running={:.1}/{:.0}",
             pos_idx + 1,
             NUM_POSITIONS,
-            result_a,
-            plies_a,
-            result_b,
-            plies_b,
+            label_a,
+            result_a.plies,
+            label_b,
+            result_b.plies,
             total_score,
             pass_points,
         );
@@ -415,6 +486,30 @@ fn main() {
     );
     println!();
 
+    // Write JSON output if requested
+    if let Some(ref path) = json_output_path {
+        let json_content = format!(
+            "{{\n  \"param_count\": {},\n  \"score\": {:.1},\n  \"score_pct\": {:.1},\n  \"wins\": {},\n  \"draws\": {},\n  \"losses\": {},\n  \"total_games\": {},\n  \"passed\": {},\n  \"games\": [\n    {}\n  ]\n}}",
+            param_count,
+            total_score,
+            total_score / TOTAL_GAMES as f64 * 100.0,
+            wins,
+            draws,
+            losses,
+            TOTAL_GAMES,
+            if total_score >= pass_points as f64 { "true" } else { "false" },
+            json_games.join(",\n    "),
+        );
+        match std::fs::File::create(path) {
+            Ok(mut f) => {
+                if let Err(e) = f.write_all(json_content.as_bytes()) {
+                    eprintln!("Warning: failed to write JSON output: {e}");
+                }
+            }
+            Err(e) => eprintln!("Warning: failed to create JSON output file: {e}"),
+        }
+    }
+
     let passed = total_score >= pass_points as f64;
 
     if passed {
@@ -436,6 +531,41 @@ fn main() {
         );
         std::process::exit(1);
     }
+}
+
+fn game_to_json(opening_index: usize, nn_color: &str, score: f64, result: &GameResult) -> String {
+    let outcome = if score == 1.0 {
+        "win"
+    } else if score == 0.0 {
+        "loss"
+    } else {
+        "draw"
+    };
+
+    let moves_json: Vec<String> = result
+        .move_history
+        .iter()
+        .map(|m| {
+            format!(
+                "{{\"uci\":\"{}\",\"fen\":\"{}\",\"side\":\"{}\"}}",
+                m.uci,
+                m.fen.replace('\"', "\\\""),
+                m.side,
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"opening_index\":{},\"color\":\"{}\",\"outcome\":\"{}\",\"reason\":\"{}\",\"points\":{:.1},\"move_count\":{},\"starting_fen\":\"{}\",\"moves\":[{}]}}",
+        opening_index,
+        nn_color,
+        outcome,
+        result.reason,
+        score,
+        result.plies,
+        result.starting_fen.replace('\"', "\\\""),
+        moves_json.join(","),
+    )
 }
 
 fn format_num(n: u64) -> String {
