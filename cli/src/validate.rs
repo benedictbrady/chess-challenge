@@ -20,7 +20,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
 const STOCKFISH_PATH: &str = "/tmp/stockfish/stockfish-macos-m1-apple-silicon";
-const MOVETIME_MS: u32 = 100; // ms per Stockfish move (fast for testing)
+const MOVETIME_MS: u32 = 500; // ms per Stockfish move
 const MAX_HALFMOVES: usize = 300;
 const DEFAULT_GAMES: usize = 100;
 const DEFAULT_OPENINGS_PATH: &str = "data/openings.txt";
@@ -457,7 +457,7 @@ fn benchmark_bot(
     n_games: usize,
     openings: &[String],
 ) -> BenchmarkResult {
-    let levels = [1500u32, 1600, 1700, 1800, 1900];
+    let levels = [1320u32, 1500, 1700, 1900, 2100];
     let mut results: Vec<(u32, MatchResult)> = Vec::new();
 
     for &sf_elo in &levels {

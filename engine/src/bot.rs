@@ -31,7 +31,7 @@ impl Default for BaselineBot {
 
 impl BaselineBot {
     pub fn description() -> &'static str {
-        "Alpha-beta depth 5 + quiescence, material+PST+king-safety eval, best move, no blunders"
+        "Alpha-beta depth 5 + quiescence, tapered eval (material, PSTs, king safety, passed pawns, mobility, pawn structure, bishop pair, rook bonuses)"
     }
 }
 

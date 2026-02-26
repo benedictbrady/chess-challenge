@@ -12,11 +12,11 @@ Can a neural network's position understanding substitute for search depth?
 
 | | Baseline | Your NN |
 |---|---|---|
-| **Eval** | Handcrafted (material + PST + king safety) | Learned (your ONNX model) |
-| **Search** | Alpha-beta, depth 5 | 1-ply (evaluate all legal moves, pick best) |
+| **Eval** | Handcrafted (material, PSTs, king safety, passed pawns, mobility, pawn structure) | Learned (your ONNX model) |
+| **Search** | Alpha-beta depth 5 + quiescence | 1-ply (evaluate all legal moves, pick best) |
 | **Target Elo** | ~1600–1800 | Must beat baseline at 70% |
 
-The baseline sees 5 moves ahead with a simple eval. Your network sees 1 move ahead but with (hopefully) a much better eval. Who wins?
+The baseline sees 5 moves ahead with a handcrafted eval. Your network sees 1 move ahead but with (hopefully) a much stronger learned eval. Who wins?
 
 ---
 
@@ -155,11 +155,11 @@ chess-challenge/
 ├── engine/              # Core library
 │   └── src/
 │       ├── bot.rs       # BaselineBot (depth 5, alpha-beta)
-│       ├── eval.rs      # Material + PST + king safety evaluation
+│       ├── eval.rs      # Tapered eval: material, PSTs, king safety, passed pawns, mobility
 │       ├── game.rs      # GameState, move generation, repetition detection
 │       ├── nn.rs        # NnEvalBot: ONNX eval inference, board encoding
 │       ├── openings.rs  # Opening book loader
-│       └── search.rs    # Negamax + alpha-beta pruning
+│       └── search.rs    # Negamax + alpha-beta pruning + quiescence search
 ├── cli/                 # Command-line tools
 │   └── src/
 │       ├── main.rs      # Human vs bot (ASCII board)
