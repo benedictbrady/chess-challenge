@@ -2,7 +2,7 @@
 
 **Build the smallest neural network that can beat a strong chess engine.**
 
-Train an ONNX evaluation network and run it against increasingly strong alpha-beta baselines (levels 1–5). Your net uses only 1-ply search — it evaluates every legal move one step ahead and picks the best. Each level requires **70% or higher across 50 games**. Submissions are rated by highest level passed, then fewest parameters.
+Train an ONNX evaluation network and run it against increasingly strong alpha-beta baselines (levels 1–5). Your net always uses **depth-1 search** — it evaluates every legal move one step ahead and picks the best. This is fixed and cannot be changed. Each level requires **70% or higher across 50 games**. Submissions are rated by highest level passed, then fewest parameters.
 
 ---
 
@@ -13,7 +13,7 @@ Can a neural network's position understanding substitute for search depth?
 | | Baseline | Your NN |
 |---|---|---|
 | **Eval** | Handcrafted (material, PSTs, king safety, passed pawns, mobility, pawn structure) | Learned (your ONNX model) |
-| **Search** | Alpha-beta depth 1–4 + quiescence | 1-ply (evaluate all legal moves, pick best) |
+| **Search** | Alpha-beta depth 1–4 + quiescence | Depth 1 only (evaluate all legal moves, pick best) |
 | **Target Elo** | ~1500–1600 (Level 5) | Must beat baseline at 70% per level |
 
 The baseline sees several moves ahead with a handcrafted eval. Your network sees 1 move ahead but with (hopefully) a much stronger learned eval. Who wins?
@@ -25,9 +25,9 @@ Your model is tested against increasingly strong baselines:
 | Level | Name | Depth | Mode | Description |
 |-------|------|-------|------|-------------|
 | 1 | Beginner | 1 | classic | Pure eval — picks best immediate position |
-| 2 | Novice | 2 | classic | 2-ply alpha-beta + quiescence |
-| 3 | Intermediate | 3 | classic | 3-ply alpha-beta + quiescence |
-| 4 | Advanced | 3 | enhanced | 3-ply + TT/PVS/NMP/delta pruning |
+| 2 | Novice | 2 | classic | Depth-2 alpha-beta + quiescence |
+| 3 | Intermediate | 3 | classic | Depth-3 alpha-beta + quiescence |
+| 4 | Advanced | 3 | enhanced | Depth-3 + TT/PVS/NMP/delta pruning |
 | 5 | Expert | 4 | enhanced | Full strength baseline (~1500–1600 Elo) |
 
 Levels 3 and 4 are both depth 3, but enhanced mode adds transposition tables, null-move pruning, and other techniques — a meaningful jump in difficulty. By default the runner tests all levels and stops at the first failure.
@@ -83,11 +83,12 @@ Checkmates are detected immediately (no NN needed). Draws evaluate to 0.0.
 
 ## Rules
 
-1. **50 games per level** — 25 opening positions × 2 colors (NN plays both sides)
-2. **Score 70% or higher** — win=1, draw=0.5, loss=0 (need 35/50 points)
-3. **1M parameter limit** — models exceeding this are rejected
-4. **Two-axis rating** — highest level passed, then fewest parameters (lower is better)
-5. Games use openings from the book (`data/openings.txt`)
+1. **Depth-1 search only** — your model always uses depth-1 search (see "How Your Model Is Used" below). This is enforced by the harness and cannot be changed.
+2. **50 games per level** — 25 opening positions × 2 colors (NN plays both sides)
+3. **Score 70% or higher** — win=1, draw=0.5, loss=0 (need 35/50 points)
+4. **1M parameter limit** — models exceeding this are rejected
+5. **Two-axis rating** — highest level passed, then fewest parameters (lower is better)
+6. Games use openings from the book (`data/openings.txt`)
 
 ---
 
