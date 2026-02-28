@@ -114,7 +114,7 @@ fn sorted_moves(
 }
 
 /// Captures with MVV-LVA ordering (used by both classic and enhanced quiescence).
-fn capture_moves(board: &Board) -> Vec<Move> {
+pub fn capture_moves(board: &Board) -> Vec<Move> {
     let mut captures = Vec::with_capacity(16);
     board.generate_moves(|piece_moves| {
         for mv in piece_moves {

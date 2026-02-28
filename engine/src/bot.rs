@@ -53,7 +53,7 @@ impl Level {
 
     pub fn description(self) -> &'static str {
         match self.value {
-            1 => "Depth 1 classic — picks best immediate position",
+            1 => "Depth 1 classic + quiescence — both sides follow captures",
             2 => "Depth 2 classic — 2-ply alpha-beta + quiescence",
             3 => "Depth 3 classic — 3-ply alpha-beta + quiescence",
             4 => "Depth 3 enhanced — TT/PVS/NMP/delta pruning",

@@ -1,4 +1,4 @@
-use cozy_chess::{Color, GameStatus, Piece, Square};
+use cozy_chess::{Board, Color, GameStatus, Piece, Square};
 use ort::session::Session;
 use ort::value::Tensor;
 use std::path::Path;
@@ -6,6 +6,7 @@ use std::sync::Mutex;
 
 use crate::bot::Bot;
 use crate::game::GameState;
+use crate::search::capture_moves;
 use crate::Move;
 
 // Piece channel order (matches both current-player and opponent halves)
@@ -132,10 +133,14 @@ pub fn count_parameters(path: &Path) -> Result<u64, Box<dyn std::error::Error + 
 }
 
 // ---------------------------------------------------------------------------
-// NnEvalBot — scalar eval network with 1-ply search
+// NnEvalBot — scalar eval network with depth-1 + quiescence search
 // ---------------------------------------------------------------------------
 
-/// A chess bot that runs an ONNX scalar evaluation network with 1-ply search.
+const MATE_SCORE_F: f32 = 100_000.0;
+const DRAW_SCORE_F: f32 = 0.0;
+
+/// A chess bot that runs an ONNX scalar evaluation network with depth-1
+/// search plus quiescence (follows captures to quiet positions).
 ///
 /// The model must accept input "board" [N, 768] float32 and output a scalar
 /// eval [N, 1] float32 (positive = good for side to move).
@@ -212,7 +217,45 @@ impl NnEvalBot {
         Ok(results[0])
     }
 
-    /// 1-ply search: evaluate all legal moves, return the best one.
+    /// Quiescence search using the NN eval. Follows captures until the
+    /// position is quiet, then returns the NN evaluation.
+    fn quiescence_nn(
+        &self,
+        board: &Board,
+        mut alpha: f32,
+        beta: f32,
+    ) -> Result<f32, Box<dyn std::error::Error>> {
+        match board.status() {
+            GameStatus::Won => return Ok(-MATE_SCORE_F),
+            GameStatus::Drawn => return Ok(DRAW_SCORE_F),
+            GameStatus::Ongoing => {}
+        }
+
+        let stand_pat = self.nn_eval(&GameState::from_board(board.clone()))?;
+        if stand_pat >= beta {
+            return Ok(beta);
+        }
+        if stand_pat > alpha {
+            alpha = stand_pat;
+        }
+
+        for mv in capture_moves(board) {
+            let mut child = board.clone();
+            child.play_unchecked(mv);
+            let score = -self.quiescence_nn(&child, -beta, -alpha)?;
+            if score >= beta {
+                return Ok(beta);
+            }
+            if score > alpha {
+                alpha = score;
+            }
+        }
+
+        Ok(alpha)
+    }
+
+    /// Depth-1 search with quiescence: for each legal move, run quiescence
+    /// on the resulting position to follow captures to quiet positions.
     fn try_choose_move(
         &self,
         game: &GameState,
@@ -222,65 +265,34 @@ impl NnEvalBot {
             return Ok(None);
         }
 
-        // Separate moves into terminal (checkmate/draw) and those needing NN eval
-        let mut best_checkmate: Option<Move> = None;
-        let mut draw_moves: Vec<Move> = Vec::new();
-        let mut eval_moves: Vec<Move> = Vec::new();
-        let mut eval_tensors: Vec<Vec<f32>> = Vec::new();
+        let mut best_mv: Option<Move> = None;
+        let mut best_eval = f32::NEG_INFINITY;
 
         for &mv in &legal {
             let mut child_board = game.board.clone();
             child_board.play_unchecked(mv);
 
-            match child_board.status() {
-                GameStatus::Won => {
-                    // The side that just moved won = checkmate
-                    best_checkmate = Some(mv);
-                    break;
-                }
-                GameStatus::Drawn => {
-                    draw_moves.push(mv);
-                }
+            let eval = match child_board.status() {
+                GameStatus::Won => MATE_SCORE_F,
+                GameStatus::Drawn => DRAW_SCORE_F,
                 GameStatus::Ongoing => {
-                    // Build a GameState for the child to get proper tensor encoding
-                    let child_game = GameState::from_board(child_board);
-                    eval_tensors.push(board_to_tensor(&child_game));
-                    eval_moves.push(mv);
+                    -self.quiescence_nn(&child_board, f32::NEG_INFINITY, f32::INFINITY)?
                 }
-            }
-        }
+            };
 
-        // Immediate checkmate
-        if let Some(mv) = best_checkmate {
-            return Ok(Some(mv));
-        }
-
-        // Evaluate all non-terminal positions in one batch
-        let evals = self.nn_eval_batch(&eval_tensors)?;
-
-        // Find the best move: negate child evals (opponent's perspective)
-        let mut best_mv: Option<Move> = None;
-        let mut best_eval = f32::NEG_INFINITY;
-
-        for (i, &mv) in eval_moves.iter().enumerate() {
-            let eval = -evals[i]; // negate: child is from opponent's view
             if eval > best_eval {
                 best_eval = eval;
                 best_mv = Some(mv);
             }
-        }
 
-        // Draws get eval 0.0
-        for &mv in &draw_moves {
-            if 0.0 > best_eval {
-                best_eval = 0.0;
-                best_mv = Some(mv);
+            // Immediate checkmate — no need to keep searching
+            if eval >= MATE_SCORE_F {
+                break;
             }
         }
 
-        // Fallback: if nothing scored (all moves were draws and no eval moves)
         if best_mv.is_none() {
-            best_mv = draw_moves.into_iter().next().or_else(|| legal.into_iter().next());
+            best_mv = legal.into_iter().next();
         }
 
         Ok(best_mv)

@@ -13,7 +13,7 @@ Can a neural network's position understanding substitute for search depth?
 | | Baseline | Your NN |
 |---|---|---|
 | **Eval** | Handcrafted (material, PSTs, king safety, passed pawns, mobility, pawn structure) | Learned (your ONNX model) |
-| **Search** | Alpha-beta depth 1–4 + quiescence | Depth 1 only (evaluate all legal moves, pick best) |
+| **Search** | Alpha-beta depth 1–4 + quiescence | Depth 1 + quiescence (follows captures to quiet positions) |
 | **Target Elo** | ~1500–1600 (Level 5) | Must beat baseline at 70% per level |
 
 The baseline sees several moves ahead with a handcrafted eval. Your network sees 1 move ahead but with (hopefully) a much stronger learned eval. Who wins?
@@ -64,12 +64,12 @@ When it is Black's turn, ranks are flipped (a1↔a8) so the network always sees 
 For each move the NN makes:
 1. Generate all legal moves
 2. For each move, apply it to get a child position
-3. Encode all child positions as `[N, 768]` tensors (batched)
-4. Run one ONNX inference call → `[N, 1]` output
-5. Negate each eval (child is from opponent's perspective)
+3. If the child is checkmate or draw, score it immediately
+4. Otherwise, run **quiescence search** on the child — follow all captures until the position is quiet, then evaluate with the NN
+5. Negate the eval (child is from opponent's perspective)
 6. Pick the move with the highest eval
 
-Checkmates are detected immediately (no NN needed). Draws evaluate to 0.0.
+Both the NN bot and the baseline use quiescence search at every level, so the comparison is fair: both sides follow captures to quiet positions before evaluating.
 
 ### ONNX Requirements
 
