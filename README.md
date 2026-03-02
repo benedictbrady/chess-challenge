@@ -77,7 +77,7 @@ Both the NN bot and the baseline use quiescence search at every level, so the co
 - Output can have any name (accessed by index)
 - `ir_version = 8`, opset 17 recommended
 - All weights stored as ONNX initializers (the harness counts parameters from these)
-- Max **1,000,000 parameters**
+- Max **10,000,000 parameters**
 
 ---
 
@@ -86,7 +86,7 @@ Both the NN bot and the baseline use quiescence search at every level, so the co
 1. **Depth-1 search only** — your model always uses depth-1 search (see "How Your Model Is Used" below). This is enforced by the harness and cannot be changed.
 2. **50 games per level** — 25 opening positions × 2 colors (NN plays both sides)
 3. **Score 70% or higher** — win=1, draw=0.5, loss=0 (need 35/50 points)
-4. **1M parameter limit** — models exceeding this are rejected
+4. **10M parameter limit** — models exceeding this are rejected
 5. **Two-axis rating** — highest level passed, then fewest parameters (lower is better)
 6. Games use openings from the book (`data/openings.txt`)
 
