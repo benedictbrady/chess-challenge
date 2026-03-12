@@ -40,24 +40,35 @@ Your ONNX model must conform to this interface:
 
 | Tensor | Name | Shape | dtype |
 |--------|------|-------|-------|
-| Input  | `board` | `[1, 768]` | float32 |
+| Input  | `board` | `[1, 1536]` | float32 |
 | Output | (any) | `[1, 1]` | float32 |
 
 The output is a **scalar evaluation**: positive = good for side to move.
 
 ### Board Encoding
 
-The board is encoded as **12 binary planes × 64 squares = 768 floats**, always from the current player's perspective:
+The board is encoded as **dual perspective**: two 768-element halves = **1536 floats**. Each half encodes all 12 piece planes × 64 squares from one side's viewpoint.
+
+**First 768 — Side-to-move (STM) perspective:**
 
 | Channel | Contents |
 |---------|----------|
-| 0–5 | Current player's Pawns, Knights, Bishops, Rooks, Queens, King |
+| 0–5 | STM's Pawns, Knights, Bishops, Rooks, Queens, King |
 | 6–11 | Opponent's Pawns, Knights, Bishops, Rooks, Queens, King |
 
-**Square indexing:** `a1=0, b1=1, …, h1=7, a2=8, …, h8=63`
-**Flat index:** `channel * 64 + square`
+**Last 768 — Non-side-to-move (NSTM) perspective:**
 
-When it is Black's turn, ranks are flipped (a1↔a8) so the network always sees its own pawns advancing up the board. Files are not flipped.
+| Channel | Contents |
+|---------|----------|
+| 0–5 | NSTM's Pawns, Knights, Bishops, Rooks, Queens, King |
+| 6–11 | STM's Pawns, Knights, Bishops, Rooks, Queens, King |
+
+**Square indexing:** `a1=0, b1=1, …, h1=7, a2=8, …, h8=63`
+**Flat index:** `channel * 64 + square` (offset by 768 for the NSTM half)
+
+Each half flips ranks (a1↔a8) when its perspective's color is Black, so the network always sees that side's pawns advancing up the board. Files are not flipped.
+
+This dual encoding enables NNUE-style architectures where a shared feature transformer processes both perspectives through the same weights, then output layers compare the two views.
 
 ### How Your Model Is Used
 
