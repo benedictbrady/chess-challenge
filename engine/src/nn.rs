@@ -30,31 +30,39 @@ fn square_idx(sq: Square, flip: bool) -> usize {
     file + rank * 8
 }
 
-/// Encode a board position as a flat [1536] float32 tensor (dual perspective).
+/// Number of floats per perspective half: 12 piece planes × 64 squares + 2 castling rights.
+const HALF_SIZE: usize = 770;
+
+/// Total tensor size: two perspective halves.
+pub const TENSOR_SIZE: usize = HALF_SIZE * 2; // 1540
+
+/// Encode a board position as a flat [1540] float32 tensor (dual perspective).
 ///
-/// Layout: two 768-element halves, each with 12 planes × 64 squares.
+/// Layout: two 770-element halves.  Each half contains:
+///   - 768 floats: 12 piece planes × 64 squares
+///   - 2 floats:   castling rights (kingside, queenside) for that half's color
 ///
-/// First 768 (STM perspective):
+/// First 770 (STM perspective):
 /// - Channels 0–5:  side-to-move's pieces (P, N, B, R, Q, K)
 /// - Channels 6–11: opponent's pieces      (P, N, B, R, Q, K)
+/// - [768]: STM can castle kingside  (1.0 / 0.0)
+/// - [769]: STM can castle queenside (1.0 / 0.0)
 /// - Ranks flipped when STM is Black.
 ///
-/// Last 768 (NSTM perspective):
+/// Last 770 (NSTM perspective):
 /// - Channels 0–5:  non-side-to-move's pieces (P, N, B, R, Q, K)
 /// - Channels 6–11: side-to-move's pieces      (P, N, B, R, Q, K)
+/// - [1538]: NSTM can castle kingside  (1.0 / 0.0)
+/// - [1539]: NSTM can castle queenside (1.0 / 0.0)
 /// - Ranks flipped when NSTM is Black.
-///
-/// Both halves see ALL 12 piece channels from their respective viewpoint.
-/// A shared feature transformer processes each half identically, then the
-/// output layers compare the two perspectives.
 pub fn board_to_tensor(game: &GameState) -> Vec<f32> {
     let board = &game.board;
     let us = board.side_to_move();
     let them = !us;
 
-    let mut tensor = vec![0.0f32; 1536];
+    let mut tensor = vec![0.0f32; TENSOR_SIZE];
 
-    // First 768: STM perspective (our pieces ch 0-5, their pieces ch 6-11)
+    // First half: STM perspective (our pieces ch 0-5, their pieces ch 6-11)
     let stm_flip = us == Color::Black;
     for (ch, &piece) in PIECE_TYPES.iter().enumerate() {
         for sq in board.colored_pieces(us, piece) {
@@ -64,16 +72,32 @@ pub fn board_to_tensor(game: &GameState) -> Vec<f32> {
             tensor[(ch + 6) * 64 + square_idx(sq, stm_flip)] = 1.0;
         }
     }
+    // STM castling rights
+    let stm_rights = board.castle_rights(us);
+    if stm_rights.short.is_some() {
+        tensor[768] = 1.0;
+    }
+    if stm_rights.long.is_some() {
+        tensor[769] = 1.0;
+    }
 
-    // Last 768: NSTM perspective (their pieces ch 0-5, our pieces ch 6-11)
+    // Second half: NSTM perspective (their pieces ch 0-5, our pieces ch 6-11)
     let nstm_flip = them == Color::Black;
     for (ch, &piece) in PIECE_TYPES.iter().enumerate() {
         for sq in board.colored_pieces(them, piece) {
-            tensor[768 + ch * 64 + square_idx(sq, nstm_flip)] = 1.0;
+            tensor[HALF_SIZE + ch * 64 + square_idx(sq, nstm_flip)] = 1.0;
         }
         for sq in board.colored_pieces(us, piece) {
-            tensor[768 + (ch + 6) * 64 + square_idx(sq, nstm_flip)] = 1.0;
+            tensor[HALF_SIZE + (ch + 6) * 64 + square_idx(sq, nstm_flip)] = 1.0;
         }
+    }
+    // NSTM castling rights
+    let nstm_rights = board.castle_rights(them);
+    if nstm_rights.short.is_some() {
+        tensor[HALF_SIZE + 768] = 1.0;
+    }
+    if nstm_rights.long.is_some() {
+        tensor[HALF_SIZE + 769] = 1.0;
     }
 
     tensor
@@ -162,7 +186,7 @@ const DRAW_SCORE_F: f32 = 0.0;
 /// A chess bot that runs an ONNX scalar evaluation network with depth-1
 /// search plus quiescence (follows captures to quiet positions).
 ///
-/// The model must accept input "board" [N, 1536] float32 and output a scalar
+/// The model must accept input "board" [N, 1540] float32 and output a scalar
 /// eval [N, 1] float32 (positive = good for side to move).
 pub struct NnEvalBot {
     session: Mutex<Session>,
@@ -180,7 +204,7 @@ impl NnEvalBot {
     }
 
     /// Evaluate a batch of positions in a single ONNX call.
-    /// Each tensor in `tensors` is a flat [1536] encoding.
+    /// Each tensor in `tensors` is a flat [1540] encoding.
     /// Returns one scalar eval per position.
     /// Falls back to one-at-a-time inference if batching fails.
     fn nn_eval_batch(
@@ -212,12 +236,12 @@ impl NnEvalBot {
     ) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
         let n = tensors.len();
 
-        let mut flat = Vec::with_capacity(n * 1536);
+        let mut flat = Vec::with_capacity(n * TENSOR_SIZE);
         for t in tensors {
             flat.extend_from_slice(t);
         }
 
-        let input = Tensor::<f32>::from_array(([n, 1536], flat))?;
+        let input = Tensor::<f32>::from_array(([n, TENSOR_SIZE], flat))?;
 
         let mut session = self
             .session
