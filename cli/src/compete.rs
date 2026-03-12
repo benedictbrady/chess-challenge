@@ -516,7 +516,7 @@ fn main() {
     if args.len() < 2 || args[1] == "--help" || args[1] == "-h" {
         eprintln!("Usage: compete <model.onnx> [--level N] [--openings <path>] [--json-output <path>]");
         eprintln!();
-        eprintln!("  model.onnx            ONNX eval network (input: board [1,768], output: eval [1,1])");
+        eprintln!("  model.onnx            ONNX eval network (input: board [1,1540], output: eval [1,1])");
         eprintln!("  --level N             Run only level N (1-5). Omit to run all levels.");
         eprintln!("  --openings <path>     opening FEN file (default: data/openings.txt)");
         eprintln!("  --json-output <path>  write per-game JSON results to file (for server integration)");

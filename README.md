@@ -40,24 +40,41 @@ Your ONNX model must conform to this interface:
 
 | Tensor | Name | Shape | dtype |
 |--------|------|-------|-------|
-| Input  | `board` | `[1, 768]` | float32 |
+| Input  | `board` | `[1, 1540]` | float32 |
 | Output | (any) | `[1, 1]` | float32 |
 
 The output is a **scalar evaluation**: positive = good for side to move.
 
 ### Board Encoding
 
-The board is encoded as **12 binary planes × 64 squares = 768 floats**, always from the current player's perspective:
+The board is encoded as **dual perspective**: two 770-element halves = **1540 floats**. Each half encodes 12 piece planes × 64 squares + 2 castling rights from one side's viewpoint.
 
-| Channel | Contents |
-|---------|----------|
-| 0–5 | Current player's Pawns, Knights, Bishops, Rooks, Queens, King |
-| 6–11 | Opponent's Pawns, Knights, Bishops, Rooks, Queens, King |
+**First 770 — Side-to-move (STM) perspective:**
+
+| Index | Contents |
+|-------|----------|
+| 0–383 | STM's Pawns, Knights, Bishops, Rooks, Queens, King (6 channels × 64 squares) |
+| 384–767 | Opponent's Pawns, Knights, Bishops, Rooks, Queens, King (6 channels × 64 squares) |
+| 768 | STM can castle kingside (1.0 / 0.0) |
+| 769 | STM can castle queenside (1.0 / 0.0) |
+
+**Last 770 — Non-side-to-move (NSTM) perspective:**
+
+| Index | Contents |
+|-------|----------|
+| 770–1153 | NSTM's Pawns, Knights, Bishops, Rooks, Queens, King |
+| 1154–1537 | STM's Pawns, Knights, Bishops, Rooks, Queens, King |
+| 1538 | NSTM can castle kingside (1.0 / 0.0) |
+| 1539 | NSTM can castle queenside (1.0 / 0.0) |
 
 **Square indexing:** `a1=0, b1=1, …, h1=7, a2=8, …, h8=63`
-**Flat index:** `channel * 64 + square`
+**Flat index:** `channel * 64 + square` (offset by 770 for the NSTM half)
 
-When it is Black's turn, ranks are flipped (a1↔a8) so the network always sees its own pawns advancing up the board. Files are not flipped.
+Each half flips ranks (a1↔a8) when its perspective's color is Black, so the network always sees that side's pawns advancing up the board. Files are not flipped.
+
+Castling rights are included because they carry information the piece positions alone cannot express — a king on e1 with castling rights is fundamentally different from one without. Every competitive NNUE encodes them.
+
+This dual encoding enables NNUE-style architectures where a shared feature transformer processes both perspectives through the same weights, then output layers compare the two views.
 
 ### How Your Model Is Used
 
