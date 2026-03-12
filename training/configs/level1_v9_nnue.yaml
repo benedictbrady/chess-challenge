@@ -1,0 +1,19 @@
+# NNUE dual-perspective model — baseline distillation
+# Architecture: shared feature transformer (768→2048) + output layers
+# Input: 1536 (dual perspective encoding)
+# Params: ~1.64M
+
+data_path: /data/datasets/v4_baseline_distill_10m/data.npz
+architecture: nnue_2048_16_32
+epochs: 100
+batch_size: 8192
+learning_rate: 0.001
+min_lr: 0.000001
+weight_decay: 0.00001
+eval_scale: 400.0
+loss_type: sigmoid_mse
+grad_clip: 1.0
+augment_hflip: true
+warmup_epochs: 2
+val_fraction: 0.05
+checkpoint_dir: /data/checkpoints/level1_v9_nnue

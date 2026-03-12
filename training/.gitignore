@@ -1,0 +1,10 @@
+# Training artifacts
+data/
+checkpoints/
+models/
+*.onnx
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
