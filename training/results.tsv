@@ -50,4 +50,6 @@ exp47_2048_wd1e3	-	1.8M	lichess_2024_01_sf 500K	sigmoid_mse	400.0	60	completed	W
 exp48_2048_lr1e3_bs8192	14.5/50	1.8M	lichess_2024_01_sf 500K	sigmoid_mse	400.0	60	completed	LR 1e-3 + batch 8192 — worse
 exp49_2048_1M_sf	22.5/50	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	60	completed	1M data, 14W. Still improving at ep59 — undertrained
 exp50_4096_1M_sf	15.0/50	4.2M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	60	completed	4096 still worse than 2048 even with 1M. Inference speed penalty
-exp51_2048_1M_120ep	-	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	120	running	120 epochs — exp49 was undertrained
+exp51_2048_1M_120ep	15.5/50	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	120	completed	Overfit — 120ep too many even for 1M. Cosine LR extends high-LR phase
+exp52_4096_1M_100ep	17.5/50	4.2M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	100	completed	With search fix: 17.5. Slower inference still hurts
+exp54_2048_1M_close500	18.5/50	1.8M	835K SF (|eval|<500cp filtered)	sigmoid_mse	400.0	60	completed	Best val loss (0.007) but same play strength. Filter helps loss, not games

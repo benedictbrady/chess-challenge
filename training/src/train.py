@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, random_split
 
-from .dataset import ChessEvalDataset, ChessOutcomeDataset, ChessBlendedDataset, ChessMultiOutcomeDataset
+from .dataset import ChessEvalDataset, ChessOutcomeDataset, ChessBlendedDataset, ChessMultiOutcomeDataset, ChessMultiDataset
 from .model import build_model
 
 
@@ -118,11 +118,14 @@ def train(config: dict):
                 decisive_only=config.get("decisive_only", False),
             )
     else:
-        assert not is_multi, "Multi-file loading not yet supported for eval losses"
-        dataset = ChessEvalDataset(
-            data_path,
-            max_abs_eval=config.get("max_abs_eval", 10000.0),
-        )
+        if is_multi:
+            dataset = ChessMultiDataset(data_paths, label_key="evals",
+                                        max_abs_eval=config.get("max_abs_eval", 10000.0))
+        else:
+            dataset = ChessEvalDataset(
+                data_path,
+                max_abs_eval=config.get("max_abs_eval", 10000.0),
+            )
 
     print(f"Dataset: {len(dataset):,} samples")
 

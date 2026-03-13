@@ -99,7 +99,7 @@ class ChessMultiDataset(Dataset):
     Supports eval-only, outcome-only, or both (for blended training).
     """
 
-    def __init__(self, data_paths: list[str], label_key: str = "evals"):
+    def __init__(self, data_paths: list[str], label_key: str = "evals", max_abs_eval: float = 10000.0):
         all_positions = []
         all_labels = []
 
@@ -112,6 +112,13 @@ class ChessMultiDataset(Dataset):
         labels = np.concatenate(all_labels, axis=0)
 
         assert positions.shape[1] == 1540, f"Expected 1540 features, got {positions.shape[1]}"
+
+        # Filter extreme evals
+        mask = np.abs(labels) <= max_abs_eval
+        if mask.sum() < len(mask):
+            print(f"  Filtered to |eval| <= {max_abs_eval}: {mask.sum():,} / {len(mask):,}")
+            positions = positions[mask]
+            labels = labels[mask]
 
         self.positions = torch.from_numpy(positions)
         self.labels = torch.from_numpy(labels)

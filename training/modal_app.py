@@ -540,6 +540,7 @@ def train(
     warmup_epochs: int = 2,
     grad_clip: float = 1.0,
     resume_from: str = "",
+    max_abs_eval: float = 10000.0,
 ):
     """Train a model on data from the volume.
 
@@ -581,6 +582,7 @@ def train(
         "checkpoint_dir": ckpt_dir,
         "num_workers": 2,
         "seed": 42,
+        "max_abs_eval": max_abs_eval,
     }
     if resume_from:
         config["resume_from"] = f"{VOLUME_PATH}/checkpoints/{resume_from}/best.pt"

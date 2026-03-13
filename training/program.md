@@ -9,7 +9,9 @@ Train a neural network chess evaluation function that scores **35/50 (70%)** aga
 - ONNX format, 1540-float input (dual-perspective encoding)
 - Must integrate with existing Rust `compete` CLI
 
-**Current best: 19.5/50 (39%) — exp09** (nnue_1024x2_32_32, 1.5M outcome data, outcome_bce, eval_scale=1.0, early checkpoint ~epoch 15)
+**Current best: ~22-24/50 (44-49%) — exp40** (nnue_2048x2_64_32, 500K SF data, sigmoid_mse, eval_scale=400, 60 epochs + alpha-beta search fix)
+
+**Previous best: 19.5/50 (39%) — exp09** (nnue_1024x2_32_32, 1.5M outcome data, outcome_bce, eval_scale=1.0, early checkpoint)
 
 ## What we know
 
@@ -50,56 +52,42 @@ The fix is training on Stockfish centipawn labels (sigmoid_mse or direct_mse), b
 
 ## Ideas queue (ranked by expected impact)
 
-### 1. Fix sigmoid_mse via weight init (HIGH — directly addresses core blocker)
+### 0. DONE — Breakthroughs from training-run-2 session
 
-The _init_weights code in model.py scales the final layer to produce outputs in [-300, 300] cp range initially. This should prevent sigmoid(x/400) from starting at the flat 0.5 plateau.
+**sigmoid_mse with weight init fix works** — exp33 was the first functional sigmoid_mse model (15/50). The _init_weights code in model.py was the key.
 
-**What to do:**
-- Ingest fresh SF-labeled data: `modal run modal_app.py::ingest_lichess_sf --pgn-url "https://database.lichess.org/standard/lichess_db_standard_rated_2024-01.pgn.zst" --dataset-name lichess_2024_01_sf_500k --max-positions 500000 --sf-depth 10`
-- Train with sigmoid_mse, eval_scale=400: `modal run modal_app.py::train --dataset-name lichess_2024_01_sf_500k --arch nnue_1024x2_32_32 --experiment exp33_sigmoid_mse_init --loss-type sigmoid_mse --eval-scale 400 --epochs 40 --batch-size 4096 --learning-rate 1e-3`
-- **Verify** the model's initial output distribution spans ±300cp (not constant ~0)
-- If it works, this unlocks position-evaluation training and likely jumps past 39%
+**nnue_2048x2_64_32 is the sweet spot** — 1.8M params. Smaller (856K) scores 15/50, larger (4.2M) overfits on 500K data and slows inference.
 
-### 2. Direct MSE on clamped centipawns (HIGH — avoids sigmoid entirely)
+**Alpha-beta pruning at search root** — 4x speedup. Passes best-so-far alpha to quiescence calls. Changed engine/src/nn.rs.
 
-Skip the sigmoid transformation. Train with raw MSE on centipawn values clamped to [-2000, 2000]. The model learns centipawn-scale outputs directly. Simpler gradient landscape.
+**Data filtering to |eval| < 500cp** — improves val loss but doesn't change playing strength.
 
-**What to do:**
-- Use existing `direct_mse` loss in train.py (already implemented)
-- `modal run modal_app.py::train --dataset-name lichess_2024_01_sf_500k --arch nnue_1024x2_32_32 --experiment exp_direct_mse --loss-type direct_mse --epochs 40 --batch-size 4096 --learning-rate 1e-3`
-- No sigmoid at all — model output IS the centipawn eval
+**Curriculum from outcome models is a dead end** — sigmoid(x/400) gradient = 0 when model outputs [-2, 2].
 
-### 3. Curriculum: outcome pretrain → SF fine-tune (MEDIUM)
+**The plateau at 20-24/50** — All configs (500K-1M data, 1.8M-4.2M params, various hyperparams) converge to this range. Val loss improvements don't translate to better play. The gap to 35/50 requires fundamentally better training data (higher SF depth or 10x more positions).
 
-Use outcome training (which works) to learn coarse features, then switch to SF sigmoid_mse (with fixed init) for fine-grained eval. The outcome-pretrained model starts with meaningful features instead of random init.
+### 1. Higher depth SF labels (HIGH — next priority)
 
-**What to do:**
-- Take exp09's best checkpoint (the 19.5/50 model)
-- Fine-tune on SF data with sigmoid_mse at very low LR (1e-5)
-- The model already has useful features; SF loss refines the evaluation
+Depth-10 SF evals are noisy. The model plateau at 20-24/50 may be because the training signal quality caps out. Depth 15-20 gives much more accurate positional evaluations.
 
-### 4. Outcome training with better early stopping (MEDIUM)
+**Status:** `lichess_2024_03_sf_d15_500k` ingestion started (depth 15, March 2024). PGN downloaded, SF labeling in progress (~4-6 hours).
 
-exp09's 19.5/50 came from an early checkpoint (~epoch 15 of 100). We never systematically explored which epoch is optimal. Train with frequent checkpointing and test every 5 epochs.
+**What to do when ready:**
+- `modal run modal_app.py::train --dataset-name lichess_2024_03_sf_d15_500k --arch nnue_2048x2_64_32 --experiment exp_d15_2048 --loss-type sigmoid_mse --eval-scale 400 --epochs 60 --batch-size 4096 --learning-rate 5e-4`
+- Compare against depth-10 models at same data size
+- If better, ingest more depth-15 data from other months
 
-**What to do:**
-- Retrain exp09's config but save checkpoints every 5 epochs
-- Test each checkpoint at level 1
-- Find the optimal training duration (might be epoch 8, might be epoch 20)
-- This could squeeze a few more wins out of the current approach
+### 2. Much more training data (HIGH)
 
-### 5. Ranking/contrastive loss between moves (MEDIUM-LOW)
+1M positions → 5-10M positions. The handcrafted baseline has ~600 lines of domain knowledge (material, PST, king safety, mobility, passed pawns, pawn structure, bishop pair, rook files). Our NN must learn ALL of this from data. 1M positions may not be enough to accurately learn subtle features like king safety or passed pawn bonuses.
 
-For each position, evaluate all legal moves by making each move and evaluating the resulting position. Train the model to rank moves in the same order as Stockfish. This directly optimizes what matters: move selection quality.
+### 3. Ranking/contrastive loss between moves (MEDIUM)
 
-**Challenges:** requires generating move-comparison data, more complex training loop.
+Instead of training position evaluation accuracy, train move selection quality. For each position, evaluate all legal moves → rank by SF eval. Train model to preserve ranking. Directly optimizes what matters for playing strength.
 
-### 6. More/better Lichess data for outcome training (LOW)
+### 4. Ensemble of multiple random inits (MEDIUM-LOW)
 
-The 1.5M→5.5M scaling didn't help — but the extra data was from different eras/Elo ranges. Try:
-- Higher min_elo (2000+) for stronger game outcomes
-- Same era/month, more positions (increase max_positions)
-- Decisive games only (remove draws)
+Scores vary ±3-4 between runs with same config (exp40: 24.5, exp43: 21.5). Training multiple models and picking the best init might get a lucky 26-28.
 
 ## Datasets on volume
 
