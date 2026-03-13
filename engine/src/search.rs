@@ -118,7 +118,7 @@ pub fn capture_moves(board: &Board) -> Vec<Move> {
     let mut captures = Vec::with_capacity(16);
     board.generate_moves(|piece_moves| {
         for mv in piece_moves {
-            if board.piece_on(mv.to).is_some() {
+            if board.piece_on(mv.to).is_some() || mv.promotion.is_some() {
                 captures.push(mv);
             }
         }
@@ -126,9 +126,15 @@ pub fn capture_moves(board: &Board) -> Vec<Move> {
     });
     captures.sort_unstable_by(|a, b| {
         let val = |mv: &Move| {
-            let victim = piece_val(board.piece_on(mv.to).unwrap());
+            // Promotions get high priority (queen = 9)
+            let promo_val = match mv.promotion {
+                Some(Piece::Queen) => 9,
+                Some(_) => 3,
+                None => 0,
+            };
+            let victim = board.piece_on(mv.to).map_or(0, |p| piece_val(p));
             let attacker = piece_val(board.piece_on(mv.from).unwrap());
-            (victim, std::cmp::Reverse(attacker))
+            (promo_val + victim, std::cmp::Reverse(attacker))
         };
         val(b).cmp(&val(a))
     });
