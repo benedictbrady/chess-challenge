@@ -261,8 +261,8 @@ impl NnEvalBot {
         Ok(results[0])
     }
 
-    /// Quiescence search using the NN eval. Follows captures until the
-    /// position is quiet, then returns the NN evaluation.
+    /// Quiescence search using the NN eval. Follows captures (and all moves
+    /// when in check) until the position is quiet, then returns the NN eval.
     fn quiescence_nn(
         &self,
         board: &Board,
@@ -275,15 +275,33 @@ impl NnEvalBot {
             GameStatus::Ongoing => {}
         }
 
-        let stand_pat = self.nn_eval(&GameState::from_board(board.clone()))?;
-        if stand_pat >= beta {
-            return Ok(beta);
-        }
-        if stand_pat > alpha {
-            alpha = stand_pat;
+        let in_check = !board.checkers().is_empty();
+
+        // When in check, we must search all evasions (not just captures).
+        // Don't use stand-pat when in check — the position is NOT quiet.
+        if !in_check {
+            let stand_pat = self.nn_eval(&GameState::from_board(board.clone()))?;
+            if stand_pat >= beta {
+                return Ok(beta);
+            }
+            if stand_pat > alpha {
+                alpha = stand_pat;
+            }
         }
 
-        for mv in capture_moves(board) {
+        let moves = if in_check {
+            // All legal moves (must escape check)
+            let mut all = Vec::new();
+            board.generate_moves(|piece_moves| {
+                all.extend(piece_moves);
+                false
+            });
+            all
+        } else {
+            capture_moves(board)
+        };
+
+        for mv in moves {
             let mut child = board.clone();
             child.play_unchecked(mv);
             let score = -self.quiescence_nn(&child, -beta, -alpha)?;
