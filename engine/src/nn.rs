@@ -279,15 +279,23 @@ impl NnEvalBot {
 
         // When in check, we must search all evasions (not just captures).
         // Don't use stand-pat when in check — the position is NOT quiet.
-        if !in_check {
-            let stand_pat = self.nn_eval(&GameState::from_board(board.clone()))?;
-            if stand_pat >= beta {
+        let stand_pat = if in_check {
+            // No stand-pat cutoff when in check
+            f32::NEG_INFINITY
+        } else {
+            let sp = self.nn_eval(&GameState::from_board(board.clone()))?;
+            if sp >= beta {
                 return Ok(beta);
             }
-            if stand_pat > alpha {
-                alpha = stand_pat;
+            if sp > alpha {
+                alpha = sp;
             }
-        }
+            // Big delta pruning: if even capturing a queen can't reach alpha, prune
+            if sp + 1100.0 < alpha {
+                return Ok(alpha);
+            }
+            sp
+        };
 
         let moves = if in_check {
             // All legal moves (must escape check)
@@ -302,6 +310,23 @@ impl NnEvalBot {
         };
 
         for mv in moves {
+            // Small delta pruning: skip captures that can't improve alpha
+            if !in_check {
+                if let Some(victim) = board.piece_on(mv.to) {
+                    let gain = match victim {
+                        Piece::Pawn => 100.0,
+                        Piece::Knight => 320.0,
+                        Piece::Bishop => 330.0,
+                        Piece::Rook => 500.0,
+                        Piece::Queen => 900.0,
+                        Piece::King => 0.0,
+                    };
+                    if stand_pat + gain + 200.0 < alpha {
+                        continue;
+                    }
+                }
+            }
+
             let mut child = board.clone();
             child.play_unchecked(mv);
             let score = -self.quiescence_nn(&child, -beta, -alpha)?;
