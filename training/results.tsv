@@ -53,3 +53,9 @@ exp50_4096_1M_sf	15.0/50	4.2M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	60	complete
 exp51_2048_1M_120ep	15.5/50	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	120	completed	Overfit — 120ep too many even for 1M. Cosine LR extends high-LR phase
 exp52_4096_1M_100ep	17.5/50	4.2M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	100	completed	With search fix: 17.5. Slower inference still hurts
 exp54_2048_1M_close500	18.5/50	1.8M	835K SF (|eval|<500cp filtered)	sigmoid_mse	400.0	60	completed	Best val loss (0.007) but same play strength. Filter helps loss, not games
+exp55_scale200	20.0/50	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	200.0	60	completed	Steeper sigmoid — same as scale=400
+exp56_scale100	13.5/50	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	100.0	60	completed	Too steep — overfits
+exp57_direct_mse_2048	-	1.8M	1M SF (Jan+Jun 2024)	direct_mse	-	60	completed	Massive overfit — val plateaued at ep15
+exp58_huber	18.5/50	1.8M	1M SF (Jan+Jun 2024)	huber	-	60	completed	Also overfits. sigmoid_mse confirmed as best loss
+exp59_2048_1M_v2	25.7avg	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	60	completed	New init — average of 3 runs with full search improvements
+exp60_2048_1M_v3	22.7avg	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	60	completed	Weaker init — search improvements: alpha-beta+check+delta+promo
