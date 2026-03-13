@@ -23,6 +23,10 @@ path = "src/benchmark.rs"
 name = "play-move"
 path = "src/play_move.rs"
 
+[[bin]]
+name = "dump-encoding"
+path = "src/dump_encoding.rs"
+
 [dependencies]
 engine = { path = "../engine" }
 rand = "0.8"

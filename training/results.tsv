@@ -1,0 +1,34 @@
+experiment	score	params	data	loss	eval_scale	epochs	status	notes
+exp01_nnue256_outcome	0.0/50	214K	lichess_2015_01 500K	outcome_bce	400.0	30	completed	near-constant output; eval_scale=400 squashes outcomes
+exp02_nnue1024_outcome	2.0/50	856K	lichess_2015_01 500K	outcome_bce	400.0	40	completed	first sign of life; eval_scale=400 still too flat
+exp03_nnue1024_screlu	-	856K	lichess_2015_01 500K	outcome_bce	400.0	40	collapsed	SCReLU activation collapsed during training
+exp04_nnue1024_200ep	1.5/50	856K	lichess_2015_01 500K	outcome_bce	400.0	200	completed	more epochs didn't help with scale=400
+exp05_nnue4096_200ep	-	4.2M	lichess_2015_01 500K	outcome_bce	400.0	200	not tested	large model on small data, likely overfit
+exp06_bucket512_200ep	-	~500K	lichess_2015_01 500K	outcome_bce	400.0	200	not tested	bucket model, eval_scale=400 expected poor
+exp07_nnue1024_scale1 (early)	10.0/50	856K	lichess_2015_01 500K	outcome_bce	1.0	~15	completed	BREAKTHROUGH: eval_scale=1.0 gave 5x improvement
+exp07_nnue1024_scale1 (final)	1.0/50	856K	lichess_2015_01 500K	outcome_bce	1.0	100	overfit	fully trained model collapsed; early checkpoint was 10x better
+exp08_nnue4096_scale1	1.5/50	4.2M	lichess_2015_01 500K	outcome_bce	1.0	100	completed	large model overfitting on 500K; medium model better
+exp09_nnue1024_1.5M	19.5/50	856K	merged 1.5M (2015+2016)	outcome_bce	1.0	~15	completed	*** BEST RESULT *** early checkpoint; 1.5M data + scale=1.0
+exp10_nnue2048_1.5M	-	~1.7M	merged 1.5M (2015+2016)	outcome_bce	1.0	100	not tested	larger model on 1.5M
+exp11_sf_sigmoid_1024	0.0/50	856K	selfplay_sf 200K	sigmoid_mse	400.0	100	collapsed	self-play positions are unrealistic; total failure
+exp12_blended_wdl	0.5/50	856K	sf_relabeled 200K	blended_wdl_mse	400.0	50	completed	garbage reconstructed SF data (~50% errors)
+exp13_sf_sigmoid_200k	0.0/50	856K	sf_relabeled 200K	sigmoid_mse	400.0	150	collapsed	same garbage relabeled data
+exp14_nnue1024_5.5M	-	856K	merged 5.5M	outcome_bce	1.0	30	failed	data merge OOM (34GB needed)
+exp15_nnue2048_5.5M	-	~1.7M	merged 5.5M	outcome_bce	1.0	30	failed	same merge OOM
+exp16_nnue1024_2M_2024	8.5/50	856K	lichess_2024_06 2M	outcome_bce	1.0	30	completed	single 2024 dataset less effective than 2015+2016 combo
+exp17_nnue1024_2M_2017	~3/30	856K	lichess_2017_01 2M	outcome_bce	1.0	30	partial	only partially tested; 2017 data alone worse
+exp18_finetune_2M_2017	9.5/50	856K	lichess_2017_01 2M	outcome_bce	1.0	20	completed	fine-tuned from exp09; degraded (19.5->9.5)
+exp19_finetune_2M_2024	12.0/50	856K	lichess_2024_06 2M	outcome_bce	1.0	20	completed	fine-tuned from exp09; degraded (19.5->12.0)
+exp20_nnue1024_2M_10ep	10.5/50	856K	lichess_2024_06 2M	outcome_bce	1.0	10	completed	fewer epochs to avoid overfit
+exp21_nnue1024_3.5M_15ep	-	856K	merged 3.5M	outcome_bce	1.0	15	merge issues	training completed but merge may have been corrupt
+exp22_nnue1024_3.5M	11.0/50	856K	merged 3.5M (2015+2016+2017)	outcome_bce	1.0	15	completed	3.5M didn't beat exp09's 1.5M result
+exp23_sf_sigmoid400	0.0/50	856K	sf_relabeled 200K	sigmoid_mse	400.0	50	collapsed	garbage data + sigmoid squashing
+exp24_blended_wdl400	0.0/50	856K	sf_relabeled 200K	blended_wdl_mse	400.0	50	collapsed	garbage data
+exp25_sf_sigmoid400_small	0.0/50	428K	sf_relabeled 200K	sigmoid_mse	400.0	50	collapsed	smaller model still collapsed on garbage data
+exp26_real_sf_sigmoid400	0.0/50	856K	lichess_2024_01_sf 100K	sigmoid_mse	400.0	40	collapsed	real SF data but sigmoid(x/400) -> constant output (0.264-0.269)
+exp27_real_blended_wdl400	0.0/50	856K	lichess_2024_01_sf 100K	blended_wdl_mse	400.0	40	collapsed	same collapse with blended loss
+exp28_real_sf_small	0.0/50	428K	lichess_2024_01_sf 100K	sigmoid_mse	400.0	40	collapsed	smaller model, same collapse
+exp29_real_outcome_scale1	4.5/50	856K	lichess_2024_01_sf 100K	outcome_bce	1.0	30	completed	only 100K data; confirms outcome_bce+scale1 works
+exp30_sf_sigmoid50	0.0/50	856K	lichess_2024_01_sf 100K	sigmoid_mse	50.0	40	collapsed	even scale=50 caused collapse
+exp31_5.5M_multi	8.5-12.5/50	856K	5.5M multi-dataset (4 files)	outcome_bce	1.0	15	completed	5.5M WORSE than 1.5M; bottleneck is not data volume
+exp32_500k_sf_outcome	3.0/50	856K	lichess_2024_01_sf 500K	outcome_bce	1.0	20	completed	2024 data alone with 20 epochs; overfit
