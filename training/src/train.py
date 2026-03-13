@@ -43,11 +43,21 @@ def blended_wdl_mse_loss(pred_cp, target_wdl, eval_scale=400.0, **_):
     return nn.functional.mse_loss(pred_wdl, target_wdl)
 
 
+def huber_loss(pred_cp, target_cp, clamp_cp=2000.0, **_):
+    """Huber (smooth L1) loss on clamped centipawns. Robust to outlier evals."""
+    return nn.functional.huber_loss(
+        torch.clamp(pred_cp, -clamp_cp, clamp_cp),
+        torch.clamp(target_cp, -clamp_cp, clamp_cp),
+        delta=100.0,
+    )
+
+
 LOSS_FUNCTIONS = {
     "sigmoid_mse": sigmoid_mse_loss,
     "direct_mse": direct_mse_loss,
     "outcome_bce": outcome_bce_loss,
     "blended_wdl_mse": blended_wdl_mse_loss,
+    "huber": huber_loss,
 }
 
 
