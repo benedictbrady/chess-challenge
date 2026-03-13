@@ -32,3 +32,22 @@ exp29_real_outcome_scale1	4.5/50	856K	lichess_2024_01_sf 100K	outcome_bce	1.0	30
 exp30_sf_sigmoid50	0.0/50	856K	lichess_2024_01_sf 100K	sigmoid_mse	50.0	40	collapsed	even scale=50 caused collapse
 exp31_5.5M_multi	8.5-12.5/50	856K	5.5M multi-dataset (4 files)	outcome_bce	1.0	15	completed	5.5M WORSE than 1.5M; bottleneck is not data volume
 exp32_500k_sf_outcome	3.0/50	856K	lichess_2024_01_sf 500K	outcome_bce	1.0	20	completed	2024 data alone with 20 epochs; overfit
+exp33_sigmoid_mse_init	15.0/50	856K	lichess_2024_01_sf 500K	sigmoid_mse	400.0	40	completed	BREAKTHROUGH: _init_weights fix works! First functional sigmoid_mse model. 9W/0D/41L
+exp34_direct_mse	8.5/50	856K	lichess_2024_01_sf 500K	direct_mse	-	40	completed	First non-outcome loss that works. 3W/0D/47L; good diversity (31 first moves)
+exp35_curriculum_sf	0.0/50	856K	lichess_2024_01_sf 500K	sigmoid_mse	400.0	30	dead	Curriculum from exp09; sigmoid(x/400) gradient=0 at outcome-scale outputs. LR=1e-4 too low
+exp36_sigmoid_mse_80ep	15.5/50	856K	lichess_2024_01_sf 500K	sigmoid_mse	400.0	80	completed	Same as exp33 (15.0). More epochs didn't help — data-limited, not training-limited
+exp37_curriculum_direct_mse	0.5/50	856K	lichess_2024_01_sf 500K	direct_mse	-	30	completed	Curriculum from exp09; output stuck at [-12,42] cp — scale too compressed
+exp38_curriculum_sf_highLR	-	856K	lichess_2024_01_sf 500K	sigmoid_mse	400.0	30	dead	Even lr=1e-3 can't escape sigmoid plateau from outcome weights
+exp39_sigmoid_mse_600k	15.0/50	856K	lichess_2024_01_sf 600K (500k+100k)	sigmoid_mse	400.0	60	completed	Same as 500K. 100K extra same-month data didn't help
+exp40_sigmoid_mse_2048	24.5/50	1.8M	lichess_2024_01_sf 500K	sigmoid_mse	400.0	60	completed	*** NEW BEST *** 17W/0D/33L. Larger model huge jump (15→24.5). Capacity was the bottleneck!
+exp41_blended_wdl_init	11.5/50	856K	lichess_2024_01_sf 500K	blended_wdl_mse	400.0	60	completed	Blended loss worse than pure sigmoid_mse at same size. Outcome signal hurts
+exp42_sigmoid_mse_4096	17.0/50	4.2M	lichess_2024_01_sf 500K	sigmoid_mse	400.0	60	completed	Worse than 2048 (24.5)! Overfits on 500K + 3x slower inference hurts qsearch
+exp43_2048_600k	21.5/50	1.8M	lichess_2024_01_sf 600K (500k+100k)	sigmoid_mse	400.0	60	completed	Same ballpark as exp40; 100K extra same-month data doesn't help
+exp44_2048_100ep	19.0/50	1.8M	lichess_2024_01_sf 500K	sigmoid_mse	400.0	100	completed	Overfits despite best val loss (0.007422). 60ep is optimal for 500K
+exp45_2048_bs8192	20.0/50	1.8M	lichess_2024_01_sf 500K	sigmoid_mse	400.0	60	completed	Batch 8192 — same range as exp40
+exp46_2048_lr1e3	16.5/50	1.8M	lichess_2024_01_sf 500K	sigmoid_mse	400.0	60	completed	LR 1e-3 — worse than 5e-4
+exp47_2048_wd1e3	-	1.8M	lichess_2024_01_sf 500K	sigmoid_mse	400.0	60	completed	WD 1e-3 — val 0.017, way too much regularization
+exp48_2048_lr1e3_bs8192	14.5/50	1.8M	lichess_2024_01_sf 500K	sigmoid_mse	400.0	60	completed	LR 1e-3 + batch 8192 — worse
+exp49_2048_1M_sf	22.5/50	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	60	completed	1M data, 14W. Still improving at ep59 — undertrained
+exp50_4096_1M_sf	15.0/50	4.2M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	60	completed	4096 still worse than 2048 even with 1M. Inference speed penalty
+exp51_2048_1M_120ep	-	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	120	running	120 epochs — exp49 was undertrained

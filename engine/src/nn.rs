@@ -310,7 +310,7 @@ impl NnEvalBot {
         }
 
         let mut best_mv: Option<Move> = None;
-        let mut best_eval = f32::NEG_INFINITY;
+        let mut alpha = f32::NEG_INFINITY;
 
         for &mv in &legal {
             let mut child_board = game.board.clone();
@@ -320,12 +320,12 @@ impl NnEvalBot {
                 GameStatus::Won => MATE_SCORE_F,
                 GameStatus::Drawn => DRAW_SCORE_F,
                 GameStatus::Ongoing => {
-                    -self.quiescence_nn(&child_board, f32::NEG_INFINITY, f32::INFINITY)?
+                    -self.quiescence_nn(&child_board, f32::NEG_INFINITY, -alpha)?
                 }
             };
 
-            if eval > best_eval {
-                best_eval = eval;
+            if eval > alpha {
+                alpha = eval;
                 best_mv = Some(mv);
             }
 
