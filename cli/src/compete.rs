@@ -517,7 +517,7 @@ fn main() {
         eprintln!("Usage: compete <model.onnx> [--level N] [--openings <path>] [--json-output <path>]");
         eprintln!();
         eprintln!("  model.onnx            ONNX eval network (input: board [1,1540], output: eval [1,1])");
-        eprintln!("  --level N             Run only level N (1-5). Omit to run all levels.");
+        eprintln!("  --level N             Run only level N (1-4). Omit to run all levels.");
         eprintln!("  --openings <path>     opening FEN file (default: data/openings.txt)");
         eprintln!("  --json-output <path>  write per-game JSON results to file (for server integration)");
         eprintln!();
@@ -547,9 +547,9 @@ fn main() {
                 "--level" => {
                     if let Some(val) = args.get(i + 1) {
                         match val.parse::<u8>() {
-                            Ok(n) if (1..=5).contains(&n) => single_level = Some(n),
+                            Ok(n) if (1..=4).contains(&n) => single_level = Some(n),
                             _ => {
-                                eprintln!("Error: --level must be 1-5");
+                                eprintln!("Error: --level must be 1-4");
                                 std::process::exit(1);
                             }
                         }

@@ -19,17 +19,16 @@ pub struct Level {
     value: u8,
 }
 
-pub const ALL_LEVELS: [Level; 5] = [
+pub const ALL_LEVELS: [Level; 4] = [
     Level { value: 1 },
     Level { value: 2 },
     Level { value: 3 },
     Level { value: 4 },
-    Level { value: 5 },
 ];
 
 impl Level {
     pub fn new(n: u8) -> Option<Level> {
-        if (1..=5).contains(&n) {
+        if (1..=4).contains(&n) {
             Some(Level { value: n })
         } else {
             None
@@ -44,9 +43,8 @@ impl Level {
         match self.value {
             1 => "Beginner",
             2 => "Novice",
-            3 => "Intermediate",
-            4 => "Advanced",
-            5 => "Expert",
+            3 => "Advanced",
+            4 => "Expert",
             _ => unreachable!(),
         }
     }
@@ -55,9 +53,8 @@ impl Level {
         match self.value {
             1 => "Depth 1 classic + quiescence — both sides follow captures",
             2 => "Depth 2 classic — 2-ply alpha-beta + quiescence",
-            3 => "Depth 3 classic — 3-ply alpha-beta + quiescence",
-            4 => "Depth 3 enhanced — TT/PVS/NMP/delta pruning",
-            5 => "Depth 4 enhanced — full strength baseline",
+            3 => "Depth 3 enhanced — TT/PVS/NMP/delta pruning",
+            4 => "Depth 4 enhanced — full strength baseline",
             _ => unreachable!(),
         }
     }
@@ -67,14 +64,13 @@ impl Level {
             1 => 1,
             2 => 2,
             3 => 3,
-            4 => 3,
-            5 => 4,
+            4 => 4,
             _ => unreachable!(),
         }
     }
 
     pub fn enhanced(self) -> bool {
-        self.value >= 4
+        self.value >= 3
     }
 }
 
