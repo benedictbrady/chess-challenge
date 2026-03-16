@@ -2,7 +2,7 @@
 
 **Build the smallest neural network that can beat a strong chess engine.**
 
-Train an ONNX evaluation network and run it against increasingly strong alpha-beta baselines (levels 1–5). Your net always uses **depth-1 search** — it evaluates every legal move one step ahead and picks the best. This is fixed and cannot be changed. Each level requires **70% or higher across 50 games**. Submissions are rated by highest level passed, then fewest parameters.
+Train an ONNX evaluation network and run it against increasingly strong alpha-beta baselines (levels 1–4). Your net always uses **depth-1 search** — it evaluates every legal move one step ahead and picks the best. This is fixed and cannot be changed. Each level requires **70% or higher across 50 games**. Submissions are rated by highest level passed, then fewest parameters.
 
 ---
 
@@ -14,7 +14,7 @@ Can a neural network's position understanding substitute for search depth?
 |---|---|---|
 | **Eval** | Handcrafted (material, PSTs, king safety, passed pawns, mobility, pawn structure) | Learned (your ONNX model) |
 | **Search** | Alpha-beta depth 1–4 + quiescence | Depth 1 + quiescence (follows captures to quiet positions) |
-| **Target Elo** | ~1500–1600 (Level 5) | Must beat baseline at 70% per level |
+| **Target Elo** | ~1500–1600 (Level 4) | Must beat baseline at 70% per level |
 
 The baseline sees several moves ahead with a handcrafted eval. Your network sees 1 move ahead but with (hopefully) a much stronger learned eval. Who wins?
 
@@ -26,11 +26,10 @@ Your model is tested against increasingly strong baselines:
 |-------|------|-------|------|-------------|
 | 1 | Beginner | 1 | classic | Pure eval — picks best immediate position |
 | 2 | Novice | 2 | classic | Depth-2 alpha-beta + quiescence |
-| 3 | Intermediate | 3 | classic | Depth-3 alpha-beta + quiescence |
-| 4 | Advanced | 3 | enhanced | Depth-3 + TT/PVS/NMP/delta pruning |
-| 5 | Expert | 4 | enhanced | Full strength baseline (~1500–1600 Elo) |
+| 3 | Advanced | 3 | enhanced | Depth-3 + TT/PVS/NMP/delta pruning |
+| 4 | Expert | 4 | enhanced | Full strength baseline (~1500–1600 Elo) |
 
-Levels 3 and 4 are both depth 3, but enhanced mode adds transposition tables, null-move pruning, and other techniques — a meaningful jump in difficulty. By default the runner tests all levels and stops at the first failure.
+Levels 1–2 use classic alpha-beta. Levels 3–4 switch to enhanced mode with transposition tables, null-move pruning, PVS, and delta pruning. By default the runner tests all levels and stops at the first failure.
 
 ---
 
