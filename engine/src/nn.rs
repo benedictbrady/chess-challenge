@@ -302,9 +302,7 @@ impl NnEvalBot {
 
         let in_check = !board.checkers().is_empty();
 
-        let stand_pat = if in_check {
-            f32::NEG_INFINITY
-        } else {
+        if !in_check {
             let sp = self.nn_eval(&GameState::from_board(board.clone()))?;
             if sp >= beta {
                 return Ok(beta);
@@ -312,11 +310,7 @@ impl NnEvalBot {
             if sp > alpha {
                 alpha = sp;
             }
-            if sp + 1100.0 < alpha {
-                return Ok(alpha);
-            }
-            sp
-        };
+        }
 
         let moves = if in_check {
             let mut all = Vec::new();
@@ -330,22 +324,6 @@ impl NnEvalBot {
         };
 
         for mv in moves {
-            if !in_check {
-                if let Some(victim) = board.piece_on(mv.to) {
-                    let gain = match victim {
-                        Piece::Pawn => 100.0,
-                        Piece::Knight => 320.0,
-                        Piece::Bishop => 330.0,
-                        Piece::Rook => 500.0,
-                        Piece::Queen => 900.0,
-                        Piece::King => 0.0,
-                    };
-                    if stand_pat + gain + 200.0 < alpha {
-                        continue;
-                    }
-                }
-            }
-
             let mut child = board.clone();
             child.play_unchecked(mv);
             let score = -self.quiescence_nn_sequential(&child, -beta, -alpha)?;
@@ -395,9 +373,6 @@ impl NnEvalBot {
             if sp > alpha {
                 alpha = sp;
             }
-            if sp + 1100.0 < alpha {
-                return Ok(alpha);
-            }
             sp
         };
 
@@ -412,24 +387,9 @@ impl NnEvalBot {
             capture_moves(board)
         };
 
-        // Apply delta pruning and collect surviving children
+        // Collect all children (no delta pruning — NN output scale is arbitrary)
         let mut children: Vec<Board> = Vec::with_capacity(moves.len());
         for mv in &moves {
-            if !in_check {
-                if let Some(victim) = board.piece_on(mv.to) {
-                    let gain = match victim {
-                        Piece::Pawn => 100.0,
-                        Piece::Knight => 320.0,
-                        Piece::Bishop => 330.0,
-                        Piece::Rook => 500.0,
-                        Piece::Queen => 900.0,
-                        Piece::King => 0.0,
-                    };
-                    if stand_pat + gain + 200.0 < alpha {
-                        continue;
-                    }
-                }
-            }
             let mut child = board.clone();
             child.play_unchecked(*mv);
             children.push(child);
