@@ -24,7 +24,7 @@ Your model is tested against increasingly strong baselines:
 
 | Level | Name | Depth | Mode | Description |
 |-------|------|-------|------|-------------|
-| 1 | Beginner | 1 | classic | Pure eval — picks best immediate position |
+| 1 | Beginner | 1 | classic | Depth-1 + quiescence — both sides follow captures |
 | 2 | Novice | 2 | classic | Depth-2 alpha-beta + quiescence |
 | 3 | Advanced | 3 | enhanced | Depth-3 + TT/PVS/NMP/delta pruning |
 | 4 | Expert | 4 | enhanced | Full strength baseline (~1500–1600 Elo) |
