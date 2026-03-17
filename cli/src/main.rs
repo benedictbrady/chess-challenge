@@ -1,52 +1,8 @@
 use engine::bot::{Bot, BaselineBot};
 use engine::game::{GameState, Outcome};
+use engine::uci::{format_move, parse_file, parse_rank, piece_unicode};
 use engine::{Color, File, Move, Piece, Rank, Square};
 use std::io::{self, Write};
-
-fn piece_unicode(piece: Piece, color: Color) -> &'static str {
-    match (piece, color) {
-        (Piece::King, Color::White) => "♔",
-        (Piece::Queen, Color::White) => "♕",
-        (Piece::Rook, Color::White) => "♖",
-        (Piece::Bishop, Color::White) => "♗",
-        (Piece::Knight, Color::White) => "♘",
-        (Piece::Pawn, Color::White) => "♙",
-        (Piece::King, Color::Black) => "♚",
-        (Piece::Queen, Color::Black) => "♛",
-        (Piece::Rook, Color::Black) => "♜",
-        (Piece::Bishop, Color::Black) => "♝",
-        (Piece::Knight, Color::Black) => "♞",
-        (Piece::Pawn, Color::Black) => "♟",
-    }
-}
-
-fn parse_file(c: char) -> Option<File> {
-    match c {
-        'a' | 'A' => Some(File::A),
-        'b' | 'B' => Some(File::B),
-        'c' | 'C' => Some(File::C),
-        'd' | 'D' => Some(File::D),
-        'e' | 'E' => Some(File::E),
-        'f' | 'F' => Some(File::F),
-        'g' | 'G' => Some(File::G),
-        'h' | 'H' => Some(File::H),
-        _ => None,
-    }
-}
-
-fn parse_rank(c: char) -> Option<Rank> {
-    match c {
-        '1' => Some(Rank::First),
-        '2' => Some(Rank::Second),
-        '3' => Some(Rank::Third),
-        '4' => Some(Rank::Fourth),
-        '5' => Some(Rank::Fifth),
-        '6' => Some(Rank::Sixth),
-        '7' => Some(Rank::Seventh),
-        '8' => Some(Rank::Eighth),
-        _ => None,
-    }
-}
 
 fn print_board(game: &GameState) {
     let board = &game.board;
@@ -69,16 +25,6 @@ fn print_board(game: &GameState) {
         println!("{}", rank + 1);
     }
     println!("  a b c d e f g h");
-}
-
-fn promotion_suffix(p: Piece) -> &'static str {
-    match p {
-        Piece::Queen => "q",
-        Piece::Rook => "r",
-        Piece::Bishop => "b",
-        Piece::Knight => "n",
-        _ => "",
-    }
 }
 
 fn parse_move(input: &str, game: &GameState) -> Option<Move> {
@@ -124,7 +70,7 @@ fn main() {
     let bot = BaselineBot::default();
     let human_color = Color::White;
 
-    println!("Chess vs BaselineBot (~1700 ELO)");
+    println!("Chess vs BaselineBot");
     println!("You play as White. Enter moves in UCI format (e.g. e2e4, e7e8q).");
     println!("Type 'quit' to exit.");
     println!();
@@ -169,9 +115,8 @@ fn main() {
 
             match parse_move(trimmed, &game) {
                 Some(mv) => {
-                    let promo = mv.promotion.map(promotion_suffix).unwrap_or("");
                     game.make_move(mv);
-                    println!("You played: {}{}{}", mv.from, mv.to, promo);
+                    println!("You played: {}", format_move(mv));
                 }
                 None => {
                     println!("Illegal move. Try again (e.g. e2e4).");
@@ -182,9 +127,8 @@ fn main() {
             println!("Bot is thinking...");
             match bot.choose_move(&game) {
                 Some(mv) => {
-                    let promo = mv.promotion.map(promotion_suffix).unwrap_or("");
                     game.make_move(mv);
-                    println!("Bot played: {}{}{}", mv.from, mv.to, promo);
+                    println!("Bot played: {}", format_move(mv));
                 }
                 None => {
                     println!("Bot has no moves.");

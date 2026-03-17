@@ -1,7 +1,7 @@
 use eframe::egui;
 use engine::bot::{Bot, BaselineBot};
 use engine::game::{GameState, Outcome};
-use engine::{Color, File, Move, NnEvalBot, Piece, Rank, Square};
+use engine::{piece_unicode, format_move, Color, File, Move, NnEvalBot, Piece, Rank, Square};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -60,22 +60,6 @@ impl ChessApp {
             .collect();
     }
 
-    fn piece_char(piece: Piece, color: Color) -> &'static str {
-        match (piece, color) {
-            (Piece::King, Color::White) => "♔",
-            (Piece::Queen, Color::White) => "♕",
-            (Piece::Rook, Color::White) => "♖",
-            (Piece::Bishop, Color::White) => "♗",
-            (Piece::Knight, Color::White) => "♘",
-            (Piece::Pawn, Color::White) => "♙",
-            (Piece::King, Color::Black) => "♚",
-            (Piece::Queen, Color::Black) => "♛",
-            (Piece::Rook, Color::Black) => "♜",
-            (Piece::Bishop, Color::Black) => "♝",
-            (Piece::Knight, Color::Black) => "♞",
-            (Piece::Pawn, Color::Black) => "♟",
-        }
-    }
 }
 
 impl eframe::App for ChessApp {
@@ -102,21 +86,12 @@ impl eframe::App for ChessApp {
             ui.separator();
             ui.heading("Move History");
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for (i, mv) in game_snapshot.history.iter().enumerate() {
-                    let promo = mv.promotion.map(|p| match p {
-                        Piece::Queen => "q",
-                        Piece::Rook => "r",
-                        Piece::Bishop => "b",
-                        Piece::Knight => "n",
-                        _ => "",
-                    }).unwrap_or("");
+                for (i, &mv) in game_snapshot.history.iter().enumerate() {
                     ui.label(format!(
-                        "{}. {}{}{}{}",
+                        "{}. {}{}",
                         i / 2 + 1,
                         if i % 2 == 0 { "W: " } else { "B: " },
-                        mv.from,
-                        mv.to,
-                        promo
+                        format_move(mv),
                     ));
                 }
             });
@@ -179,7 +154,7 @@ impl eframe::App for ChessApp {
                         painter.text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
-                            Self::piece_char(piece, piece_color),
+                            piece_unicode(piece, piece_color),
                             egui::FontId::proportional(cell_size * 0.7),
                             egui::Color32::BLACK,
                         );
@@ -351,18 +326,11 @@ fn run_game_loop(
 
             match mv {
                 Some(mv) => {
-                    let promo = mv.promotion.map(|p| match p {
-                        Piece::Queen => "q",
-                        Piece::Rook => "r",
-                        Piece::Bishop => "b",
-                        Piece::Knight => "n",
-                        _ => "",
-                    }).unwrap_or("");
                     let mut state = shared.lock().unwrap();
                     state.game.make_move(mv);
                     state.bot_thinking = false;
                     state.status_message =
-                        format!("{} played {}{}{}", bot_name, mv.from, mv.to, promo);
+                        format!("{} played {}", bot_name, format_move(mv));
                 }
                 None => {
                     let winner = !side;
@@ -404,7 +372,7 @@ fn run_game_loop(
                     let mut state = shared.lock().unwrap();
                     state.game.make_move(mv);
                     state.bot_thinking = false;
-                    state.status_message = format!("Bot played: {}{}", mv.from, mv.to);
+                    state.status_message = format!("Bot played: {}", format_move(mv));
                 }
             }
         }

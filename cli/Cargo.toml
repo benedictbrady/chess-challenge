@@ -8,16 +8,8 @@ name = "cli"
 path = "src/main.rs"
 
 [[bin]]
-name = "validate"
-path = "src/validate.rs"
-
-[[bin]]
 name = "compete"
 path = "src/compete.rs"
-
-[[bin]]
-name = "benchmark"
-path = "src/benchmark.rs"
 
 [[bin]]
 name = "play-move"

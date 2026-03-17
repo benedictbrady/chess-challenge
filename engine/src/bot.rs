@@ -1,5 +1,4 @@
 use cozy_chess::Move;
-use rand::Rng;
 
 use crate::game::GameState;
 use crate::search::{
@@ -51,10 +50,10 @@ impl Level {
 
     pub fn description(self) -> &'static str {
         match self.value {
-            1 => "Depth 1 + quiescence",
-            2 => "Depth 2 + quiescence",
-            3 => "Depth 3 + quiescence + TT/PVS/NMP",
-            4 => "Depth 4 + quiescence + TT/PVS/NMP",
+            1 => "Depth 1, same search as your NN",
+            2 => "Depth 2, sees your response to each move",
+            3 => "Depth 3, with search optimizations",
+            4 => "Depth 4, with search optimizations",
             _ => unreachable!(),
         }
     }
@@ -74,11 +73,9 @@ impl Level {
     }
 }
 
-/// Baseline bot with configurable search mode.
+/// Baseline bot with configurable search depth.
 pub struct BaselineBot {
     pub depth: u32,
-    pub candidate_window: i32,
-    pub blunder_rate: f64,
     /// true = adds TT, PVS, NMP to the search
     pub enhanced: bool,
     /// Shared search context for enhanced mode (persists across moves)
@@ -89,8 +86,6 @@ impl Default for BaselineBot {
     fn default() -> Self {
         BaselineBot {
             depth: 4,
-            candidate_window: 0,
-            blunder_rate: 0.0,
             enhanced: true,
             ctx: std::cell::RefCell::new(SearchContext::new()),
         }
@@ -98,37 +93,18 @@ impl Default for BaselineBot {
 }
 
 impl BaselineBot {
-    pub fn new(depth: u32, candidate_window: i32, blunder_rate: f64, enhanced: bool) -> Self {
-        BaselineBot {
-            depth,
-            candidate_window,
-            blunder_rate,
-            enhanced,
-            ctx: std::cell::RefCell::new(SearchContext::new()),
-        }
-    }
-
-    /// Create a classic (original) bot with no search enhancements.
-    pub fn classic(depth: u32) -> Self {
-        Self::new(depth, 0, 0.0, false)
-    }
-
     /// Create a baseline bot configured for the given level.
     pub fn from_level(level: Level) -> Self {
-        Self::new(level.depth(), 0, 0.0, level.enhanced())
+        BaselineBot {
+            depth: level.depth(),
+            enhanced: level.enhanced(),
+            ctx: std::cell::RefCell::new(SearchContext::new()),
+        }
     }
 
     /// Reset search context (call between games to avoid TT pollution).
     pub fn reset(&self) {
         *self.ctx.borrow_mut() = SearchContext::new();
-    }
-
-    pub fn description(&self) -> String {
-        if self.enhanced {
-            format!("Depth {} + TT/PVS/NMP", self.depth)
-        } else {
-            format!("Depth {}", self.depth)
-        }
     }
 }
 
@@ -139,14 +115,7 @@ impl Bot for BaselineBot {
             return None;
         }
 
-        let mut rng = rand::thread_rng();
-
-        if self.blunder_rate > 0.0 && rng.gen::<f64>() < self.blunder_rate {
-            let idx = rng.gen_range(0..legal.len());
-            return Some(legal[idx]);
-        }
-
-        let mut scored = if self.enhanced {
+        let scored = if self.enhanced {
             let mut ctx = self.ctx.borrow_mut();
             best_move_with_scores_enhanced(&mut ctx, &game.board, self.depth)
         } else {
@@ -154,15 +123,13 @@ impl Bot for BaselineBot {
         };
 
         if scored.is_empty() {
-            let idx = rng.gen_range(0..legal.len());
-            return Some(legal[idx]);
+            return legal.into_iter().next();
         }
 
         let best_score = scored.iter().map(|(_, s)| *s).max().unwrap();
-        let threshold = best_score - self.candidate_window;
-        scored.retain(|(_, s)| *s >= threshold);
-
-        let idx = rng.gen_range(0..scored.len());
-        Some(scored[idx].0)
+        scored
+            .into_iter()
+            .find(|(_, s)| *s == best_score)
+            .map(|(mv, _)| mv)
     }
 }

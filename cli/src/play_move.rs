@@ -9,19 +9,8 @@
 
 use engine::bot::Bot;
 use engine::game::{GameState, Outcome};
-use engine::{BaselineBot, Color, Move, NnEvalBot, Piece};
+use engine::{format_move, BaselineBot, Color, NnEvalBot};
 use std::path::Path;
-
-fn format_move(mv: Move) -> String {
-    let promo = match mv.promotion {
-        Some(Piece::Queen) => "q",
-        Some(Piece::Rook) => "r",
-        Some(Piece::Bishop) => "b",
-        Some(Piece::Knight) => "n",
-        _ => "",
-    };
-    format!("{}{}{}", mv.from, mv.to, promo)
-}
 
 fn escape_json(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
@@ -37,7 +26,7 @@ fn main() {
     }
 
     let is_baseline = args[1] == "--baseline";
-    let fen = if is_baseline { &args[2] } else { &args[2] };
+    let fen = &args[2];
     let model_path = if is_baseline { None } else { Some(&args[1]) };
 
     // Load bot
@@ -93,7 +82,6 @@ fn main() {
             );
         }
         None => {
-            // No legal moves (shouldn't happen if game isn't over, but handle gracefully)
             let (game_over, outcome) = outcome_json(&game);
             println!(
                 "{{\"uci\":null,\"fen\":\"{}\",\"gameOver\":{},\"outcome\":{}}}",

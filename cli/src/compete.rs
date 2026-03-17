@@ -1,17 +1,17 @@
 /// Competition runner: pit an ONNX eval network against baseline bots at multiple levels.
 ///
 /// Usage:
-///   compete <model.onnx> [--level N] [--openings <path>] [--json-output <path>]
+///   compete <model.onnx> [--level N] [--games N] [--openings <path>] [--json-output <path>]
 ///
-/// The NN plays 50 games (25 positions x 2 colors) per level against increasingly
-/// strong baselines. Scoring: 1 for win, 0.5 for draw, 0 for loss. Must reach 70%.
+/// The NN plays N positions x 2 colors per level against increasingly strong baselines.
+/// Scoring: 1 for win, 0.5 for draw, 0 for loss. Must reach 70%.
 /// Models with >10 000 000 parameters are rejected.
 
 use engine::bot::Bot;
 use engine::game::{GameState, Outcome};
 use engine::nn::count_parameters;
 use engine::openings::load_opening_fens;
-use engine::{BaselineBot, Color, Level, Move, NnEvalBot, Piece, ALL_LEVELS};
+use engine::{format_move, BaselineBot, Color, Level, NnEvalBot, ALL_LEVELS};
 use rand::seq::SliceRandom;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -20,24 +20,8 @@ use std::time::Instant;
 
 const MAX_PARAMS: u64 = 10_000_000;
 const MAX_PLIES: usize = 500;
-const NUM_POSITIONS: usize = 25;
-const TOTAL_GAMES: usize = 50; // NUM_POSITIONS * 2
+const DEFAULT_POSITIONS: usize = 25;
 const PASS_THRESHOLD: f64 = 0.70;
-
-// ---------------------------------------------------------------------------
-// Move formatting (UCI style)
-// ---------------------------------------------------------------------------
-
-fn format_move(mv: Move) -> String {
-    let promo = match mv.promotion {
-        Some(Piece::Queen) => "q",
-        Some(Piece::Rook) => "r",
-        Some(Piece::Bishop) => "b",
-        Some(Piece::Knight) => "n",
-        _ => "",
-    };
-    format!("{}{}{}", mv.from, mv.to, promo)
-}
 
 // ---------------------------------------------------------------------------
 // Diversity tracking
@@ -323,9 +307,11 @@ fn run_level(
     level: Level,
     nn: &NnEvalBot,
     positions: &[String],
+    num_positions: usize,
 ) -> LevelResult {
     let baseline = BaselineBot::from_level(level);
-    let pass_points = (TOTAL_GAMES as f64 * PASS_THRESHOLD).ceil() as usize;
+    let total_games = num_positions * 2;
+    let pass_points = (total_games as f64 * PASS_THRESHOLD).ceil() as usize;
 
     println!();
     println!(
@@ -334,13 +320,12 @@ fn run_level(
         level.name(),
     );
     println!("  {}", level.description());
-    println!("  Baseline: {}", baseline.description());
     println!(
         "  {} games, need {:.0}% = {}/{} points",
-        TOTAL_GAMES,
+        total_games,
         PASS_THRESHOLD * 100.0,
         pass_points,
-        TOTAL_GAMES,
+        total_games,
     );
     println!();
 
@@ -394,7 +379,7 @@ fn run_level(
         println!(
             "  Pos {:>2}/{}  W:{} ({}pl)  B:{} ({}pl)  running={:.1}/{:.0}",
             pos_idx + 1,
-            NUM_POSITIONS,
+            num_positions,
             label_a,
             result_a.plies,
             label_b,
@@ -409,7 +394,7 @@ fn run_level(
     diversity.report();
 
     let passed = total_score >= pass_points as f64;
-    let pct = total_score / TOTAL_GAMES as f64 * 100.0;
+    let pct = total_score / total_games as f64 * 100.0;
 
     println!();
     if passed {
@@ -417,7 +402,7 @@ fn run_level(
             "  Level {} PASS \u{2713}  {:.1}/{} ({:.0}%) in {:.1}s",
             level.value(),
             total_score,
-            TOTAL_GAMES,
+            total_games,
             pct,
             elapsed.as_secs_f64(),
         );
@@ -426,7 +411,7 @@ fn run_level(
             "  Level {} FAIL \u{2717}  {:.1}/{} ({:.0}%) in {:.1}s",
             level.value(),
             total_score,
-            TOTAL_GAMES,
+            total_games,
             pct,
             elapsed.as_secs_f64(),
         );
@@ -448,7 +433,7 @@ fn run_level(
 // Scorecard
 // ---------------------------------------------------------------------------
 
-fn print_scorecard(results: &[LevelResult], param_count: u64) {
+fn print_scorecard(results: &[LevelResult], param_count: u64, total_games: usize) {
     let best_level = results
         .iter()
         .rev()
@@ -479,7 +464,7 @@ fn print_scorecard(results: &[LevelResult], param_count: u64) {
             r.level.value(),
             r.level.name(),
             r.score,
-            TOTAL_GAMES,
+            total_games,
             r.wins,
             r.draws,
             r.losses,
@@ -514,10 +499,11 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 || args[1] == "--help" || args[1] == "-h" {
-        eprintln!("Usage: compete <model.onnx> [--level N] [--openings <path>] [--json-output <path>]");
+        eprintln!("Usage: compete <model.onnx> [--level N] [--games N] [--openings <path>] [--json-output <path>]");
         eprintln!();
         eprintln!("  model.onnx            ONNX eval network (input: board [1,1540], output: eval [1,1])");
         eprintln!("  --level N             Run only level N (1-4). Omit to run all levels.");
+        eprintln!("  --games N             Number of opening positions (default: 25, each played as both colors)");
         eprintln!("  --openings <path>     opening FEN file (default: data/openings.txt)");
         eprintln!("  --json-output <path>  write per-game JSON results to file (for server integration)");
         eprintln!();
@@ -533,6 +519,7 @@ fn main() {
     // Parse CLI flags
     let mut openings_path = String::from("data/openings.txt");
     let mut single_level: Option<u8> = None;
+    let mut num_positions: usize = DEFAULT_POSITIONS;
     let mut json_output_path: Option<String> = None;
     {
         let mut i = 2;
@@ -550,6 +537,18 @@ fn main() {
                             Ok(n) if (1..=4).contains(&n) => single_level = Some(n),
                             _ => {
                                 eprintln!("Error: --level must be 1-4");
+                                std::process::exit(1);
+                            }
+                        }
+                        i += 1;
+                    }
+                }
+                "--games" => {
+                    if let Some(val) = args.get(i + 1) {
+                        match val.parse::<usize>() {
+                            Ok(n) if n >= 1 => num_positions = n,
+                            _ => {
+                                eprintln!("Error: --games must be >= 1");
                                 std::process::exit(1);
                             }
                         }
@@ -600,7 +599,8 @@ fn main() {
 
     // Load openings and select positions
     let openings = load_openings_or_fallback(Path::new(&openings_path));
-    let positions = select_positions(&openings, NUM_POSITIONS);
+    let total_games = num_positions * 2;
+    let positions = select_positions(&openings, num_positions);
 
     // Determine which levels to run
     let levels: Vec<Level> = match single_level {
@@ -612,7 +612,7 @@ fn main() {
     let mut results: Vec<LevelResult> = Vec::new();
 
     for level in &levels {
-        let result = run_level(*level, &nn, &positions);
+        let result = run_level(*level, &nn, &positions, num_positions);
         let failed = !result.passed;
         results.push(result);
 
@@ -625,7 +625,7 @@ fn main() {
     }
 
     // Print scorecard
-    print_scorecard(&results, param_count);
+    print_scorecard(&results, param_count, total_games);
 
     // Write JSON output if requested
     if let Some(ref path) = json_output_path {
@@ -636,7 +636,7 @@ fn main() {
                 r.level.value(),
                 r.level.name(),
                 r.score,
-                r.score / TOTAL_GAMES as f64 * 100.0,
+                r.score / total_games as f64 * 100.0,
                 r.wins,
                 r.draws,
                 r.losses,
