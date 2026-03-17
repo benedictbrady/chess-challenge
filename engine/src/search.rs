@@ -163,7 +163,7 @@ fn ordered_moves_classic(board: &Board) -> Vec<Move> {
 // CLASSIC SEARCH — original algorithm, no enhancements
 // ===========================================================================
 
-fn quiescence_classic(board: &Board, mut alpha: i32, beta: i32) -> i32 {
+pub fn quiescence_classic(board: &Board, mut alpha: i32, beta: i32) -> i32 {
     match board.status() {
         GameStatus::Won => return -MATE_SCORE,
         GameStatus::Drawn => return DRAW_SCORE,
