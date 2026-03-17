@@ -1,9 +1,9 @@
 /// Competition runner: pit an ONNX eval network against baseline bots at multiple levels.
 ///
 /// Usage:
-///   compete <model.onnx> [--level N] [--games N] [--openings <path>] [--json-output <path>]
+///   compete <model.onnx> [--level N] [--openings <path>] [--json-output <path>]
 ///
-/// The NN plays N positions x 2 colors per level against increasingly strong baselines.
+/// The NN plays all openings x 2 colors per level against increasingly strong baselines.
 /// Scoring: 1 for win, 0.5 for draw, 0 for loss. Must reach 70%.
 /// Models with >10 000 000 parameters are rejected.
 
@@ -12,7 +12,6 @@ use engine::game::{GameState, Outcome};
 use engine::nn::count_parameters;
 use engine::openings::load_opening_fens;
 use engine::{format_move, BaselineBot, Color, Level, NnEvalBot, ALL_LEVELS};
-use rand::seq::SliceRandom;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::Path;
@@ -20,7 +19,6 @@ use std::time::Instant;
 
 const MAX_PARAMS: u64 = 10_000_000;
 const MAX_PLIES: usize = 500;
-const DEFAULT_POSITIONS: usize = 25;
 const PASS_THRESHOLD: f64 = 0.70;
 
 // ---------------------------------------------------------------------------
@@ -238,33 +236,12 @@ fn load_openings_or_fallback(path: &Path) -> Vec<String> {
     }
 }
 
-/// Randomly sample `n` positions without replacement (cycles if fewer available).
-fn select_positions(openings: &[String], n: usize) -> Vec<String> {
+/// Return all openings in file order (deterministic, no sampling).
+fn select_positions(openings: &[String]) -> Vec<String> {
     if openings.is_empty() {
-        return vec!["rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(); n];
+        return vec!["rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string()];
     }
-
-    let mut rng = rand::thread_rng();
-
-    if openings.len() >= n {
-        // Sample without replacement
-        let mut indices: Vec<usize> = (0..openings.len()).collect();
-        indices.shuffle(&mut rng);
-        indices.truncate(n);
-        indices.iter().map(|&i| openings[i].clone()).collect()
-    } else {
-        // Cycle through available openings
-        let mut result = Vec::with_capacity(n);
-        let mut pool: Vec<usize> = Vec::new();
-        while result.len() < n {
-            if pool.is_empty() {
-                pool = (0..openings.len()).collect();
-                pool.shuffle(&mut rng);
-            }
-            result.push(openings[pool.pop().unwrap()].clone());
-        }
-        result
-    }
+    openings.to_vec()
 }
 
 // ---------------------------------------------------------------------------
@@ -307,9 +284,9 @@ fn run_level(
     level: Level,
     nn: &NnEvalBot,
     positions: &[String],
-    num_positions: usize,
 ) -> LevelResult {
     let baseline = BaselineBot::from_level(level);
+    let num_positions = positions.len();
     let total_games = num_positions * 2;
     let pass_points = (total_games as f64 * PASS_THRESHOLD).ceil() as usize;
 
@@ -499,12 +476,11 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 || args[1] == "--help" || args[1] == "-h" {
-        eprintln!("Usage: compete <model.onnx> [--level N] [--games N] [--openings <path>] [--json-output <path>]");
+        eprintln!("Usage: compete <model.onnx> [--level N] [--openings <path>] [--json-output <path>]");
         eprintln!();
         eprintln!("  model.onnx            ONNX eval network (input: board [1,1540], output: eval [1,1])");
         eprintln!("  --level N             Run only level N (1-4). Omit to run all levels.");
-        eprintln!("  --games N             Number of opening positions (default: 25, each played as both colors)");
-        eprintln!("  --openings <path>     opening FEN file (default: data/openings.txt)");
+        eprintln!("  --openings <path>     Path to opening book (default: data/openings.txt, all positions used)");
         eprintln!("  --json-output <path>  write per-game JSON results to file (for server integration)");
         eprintln!();
         eprintln!("Levels:");
@@ -519,7 +495,6 @@ fn main() {
     // Parse CLI flags
     let mut openings_path = String::from("data/openings.txt");
     let mut single_level: Option<u8> = None;
-    let mut num_positions: usize = DEFAULT_POSITIONS;
     let mut json_output_path: Option<String> = None;
     {
         let mut i = 2;
@@ -537,18 +512,6 @@ fn main() {
                             Ok(n) if (1..=4).contains(&n) => single_level = Some(n),
                             _ => {
                                 eprintln!("Error: --level must be 1-4");
-                                std::process::exit(1);
-                            }
-                        }
-                        i += 1;
-                    }
-                }
-                "--games" => {
-                    if let Some(val) = args.get(i + 1) {
-                        match val.parse::<usize>() {
-                            Ok(n) if n >= 1 => num_positions = n,
-                            _ => {
-                                eprintln!("Error: --games must be >= 1");
                                 std::process::exit(1);
                             }
                         }
@@ -597,10 +560,10 @@ fn main() {
         }
     };
 
-    // Load openings and select positions
+    // Load openings (fixed set, deterministic order)
     let openings = load_openings_or_fallback(Path::new(&openings_path));
-    let total_games = num_positions * 2;
-    let positions = select_positions(&openings, num_positions);
+    let positions = select_positions(&openings);
+    let total_games = positions.len() * 2;
 
     // Determine which levels to run
     let levels: Vec<Level> = match single_level {
@@ -612,7 +575,7 @@ fn main() {
     let mut results: Vec<LevelResult> = Vec::new();
 
     for level in &levels {
-        let result = run_level(*level, &nn, &positions, num_positions);
+        let result = run_level(*level, &nn, &positions);
         let failed = !result.passed;
         results.push(result);
 

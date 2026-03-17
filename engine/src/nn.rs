@@ -261,8 +261,10 @@ impl NnEvalBot {
         Ok(results[0])
     }
 
-    /// Quiescence search using the NN eval. Follows captures until the
-    /// position is quiet, then returns the NN evaluation.
+    /// Quiescence search using the NN eval with check extensions and delta pruning.
+    ///
+    /// - In check: search ALL evasion moves (not just captures)
+    /// - Delta pruning: skip captures that can't possibly improve alpha
     fn quiescence_nn(
         &self,
         board: &Board,
@@ -275,15 +277,56 @@ impl NnEvalBot {
             GameStatus::Ongoing => {}
         }
 
-        let stand_pat = self.nn_eval(&GameState::from_board(board.clone()))?;
-        if stand_pat >= beta {
-            return Ok(beta);
-        }
-        if stand_pat > alpha {
-            alpha = stand_pat;
-        }
+        let in_check = !board.checkers().is_empty();
 
-        for mv in capture_moves(board) {
+        let stand_pat = if in_check {
+            // No stand-pat cutoff when in check — position is not quiet
+            f32::NEG_INFINITY
+        } else {
+            let sp = self.nn_eval(&GameState::from_board(board.clone()))?;
+            if sp >= beta {
+                return Ok(beta);
+            }
+            if sp > alpha {
+                alpha = sp;
+            }
+            // Big delta pruning: if even capturing a queen can't reach alpha, prune
+            if sp + 1100.0 < alpha {
+                return Ok(alpha);
+            }
+            sp
+        };
+
+        // In check: must search all evasions. Otherwise: only captures/promotions.
+        let moves = if in_check {
+            let mut all = Vec::new();
+            board.generate_moves(|piece_moves| {
+                all.extend(piece_moves);
+                false
+            });
+            all
+        } else {
+            capture_moves(board)
+        };
+
+        for mv in moves {
+            // Small delta pruning: skip captures that can't improve alpha
+            if !in_check {
+                if let Some(victim) = board.piece_on(mv.to) {
+                    let gain = match victim {
+                        Piece::Pawn => 100.0,
+                        Piece::Knight => 320.0,
+                        Piece::Bishop => 330.0,
+                        Piece::Rook => 500.0,
+                        Piece::Queen => 900.0,
+                        Piece::King => 0.0,
+                    };
+                    if stand_pat + gain + 200.0 < alpha {
+                        continue;
+                    }
+                }
+            }
+
             let mut child = board.clone();
             child.play_unchecked(mv);
             let score = -self.quiescence_nn(&child, -beta, -alpha)?;
@@ -298,8 +341,7 @@ impl NnEvalBot {
         Ok(alpha)
     }
 
-    /// Depth-1 search with quiescence: for each legal move, run quiescence
-    /// on the resulting position to follow captures to quiet positions.
+    /// Depth-1 search with alpha-beta at root + quiescence.
     fn try_choose_move(
         &self,
         game: &GameState,
@@ -310,7 +352,7 @@ impl NnEvalBot {
         }
 
         let mut best_mv: Option<Move> = None;
-        let mut best_eval = f32::NEG_INFINITY;
+        let mut alpha = f32::NEG_INFINITY;
 
         for &mv in &legal {
             let mut child_board = game.board.clone();
@@ -320,12 +362,12 @@ impl NnEvalBot {
                 GameStatus::Won => MATE_SCORE_F,
                 GameStatus::Drawn => DRAW_SCORE_F,
                 GameStatus::Ongoing => {
-                    -self.quiescence_nn(&child_board, f32::NEG_INFINITY, f32::INFINITY)?
+                    -self.quiescence_nn(&child_board, f32::NEG_INFINITY, -alpha)?
                 }
             };
 
-            if eval > best_eval {
-                best_eval = eval;
+            if eval > alpha {
+                alpha = eval;
                 best_mv = Some(mv);
             }
 

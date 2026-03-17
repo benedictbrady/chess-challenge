@@ -37,9 +37,10 @@ mod tests {
     fn load_openings_all_valid() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../data/openings.txt");
         let openings = load_openings(&path).expect("all openings should parse");
-        assert!(
-            openings.len() >= 40,
-            "expected at least 40 openings, got {}",
+        assert_eq!(
+            openings.len(),
+            25,
+            "expected exactly 25 openings, got {}",
             openings.len()
         );
         for (i, game) in openings.iter().enumerate() {
