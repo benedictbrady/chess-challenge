@@ -10,12 +10,12 @@ Train an ONNX evaluation network and run it against increasingly strong baseline
 
 | Level | Name | Baseline |
 |-------|------|----------|
-| 1 | Beginner | Depth 1 (same search as your NN, just handcrafted eval) |
-| 2 | Novice | Depth 2 (sees your response to each move) |
-| 3 | Advanced | Depth 3 + TT/PVS/null-move pruning |
-| 4 | Expert | Depth 4 + TT/PVS/null-move pruning (~1500–1600 Elo) |
+| 1 | Beginner | Depth 1 — same search as your NN, just handcrafted eval |
+| 2 | Novice | Depth 2 — sees your response to each move |
+| 3 | Advanced | Depth 3 — with search optimizations |
+| 4 | Expert | Depth 4 — with search optimizations (~1500–1600 Elo) |
 
-All levels use the same quiescence search (follow captures to quiet positions, then evaluate). Your NN always uses depth 1. The runner tests all levels and stops at the first failure.
+Your NN always uses depth 1. All levels use the same quiescence search (follow captures to quiet positions, then evaluate). The runner tests all levels and stops at the first failure.
 
 ---
 
