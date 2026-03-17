@@ -592,4 +592,196 @@ mod tests {
         let scored = best_move_with_scores_classic(&board, 1);
         assert!(!scored.is_empty(), "should find at least one legal move");
     }
+
+    // ── ONNX model end-to-end tests ────────────────────────────────────
+    //
+    // These use a tiny ONNX fixture (1540→1 linear layer) checked into
+    // engine/tests/fixtures/tiny_eval.onnx. No training deps needed.
+
+    fn fixture_path() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/tiny_eval.onnx")
+    }
+
+    #[test]
+    fn count_parameters_on_fixture() {
+        let path = fixture_path();
+        let count = count_parameters(&path).expect("should parse ONNX");
+        // Linear(1540, 1) = 1540 weights. Bias may be folded away by constant folding.
+        assert!(
+            count >= 1540 && count <= 1541,
+            "expected ~1540 params, got {count}"
+        );
+    }
+
+    #[test]
+    fn load_nn_eval_bot() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).expect("should load tiny model");
+        assert!(bot.param_count >= 1540 && bot.param_count <= 1541);
+    }
+
+    #[test]
+    fn nn_eval_returns_finite_value() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+        let game = GameState::new();
+        let eval = bot.nn_eval(&game).expect("inference should succeed");
+        assert!(eval.is_finite(), "eval should be finite, got {eval}");
+    }
+
+    #[test]
+    fn nn_eval_different_positions_differ() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+
+        let startpos = GameState::new();
+        let eval1 = bot.nn_eval(&startpos).unwrap();
+
+        // Position with material imbalance — should get different eval
+        let board: Board = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKB1R w KQkq - 0 1"
+            .parse()
+            .unwrap();
+        let imbalance = GameState::from_board(board);
+        let eval2 = bot.nn_eval(&imbalance).unwrap();
+
+        assert_ne!(
+            eval1, eval2,
+            "different positions should produce different evals"
+        );
+    }
+
+    #[test]
+    fn nn_eval_batch_matches_individual() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+
+        let positions = [
+            GameState::new(),
+            GameState::from_board(
+                "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+                    .parse()
+                    .unwrap(),
+            ),
+            GameState::from_board("8/8/4k3/8/8/4K3/4P3/8 w - - 0 1".parse().unwrap()),
+        ];
+
+        // Individual evals
+        let individual: Vec<f32> = positions
+            .iter()
+            .map(|g| bot.nn_eval(g).unwrap())
+            .collect();
+
+        // Batch eval
+        let tensors: Vec<Vec<f32>> = positions.iter().map(|g| board_to_tensor(g)).collect();
+        let batch = bot.nn_eval_batch(&tensors).unwrap();
+
+        assert_eq!(individual.len(), batch.len());
+        for (i, (ind, bat)) in individual.iter().zip(&batch).enumerate() {
+            assert!(
+                (ind - bat).abs() < 1e-5,
+                "position {i}: individual={ind}, batch={bat}"
+            );
+        }
+    }
+
+    #[test]
+    fn quiescence_nn_quiet_position_returns_stand_pat() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+
+        // Startpos is quiet (no captures) — quiescence should equal stand-pat
+        let game = GameState::new();
+        let stand_pat = bot.nn_eval(&game).unwrap();
+        let qs = bot
+            .quiescence_nn(&game.board, f32::NEG_INFINITY, f32::INFINITY)
+            .unwrap();
+
+        assert!(
+            (stand_pat - qs).abs() < 1e-5,
+            "quiet position: stand_pat={stand_pat}, quiescence={qs}"
+        );
+    }
+
+    #[test]
+    fn quiescence_nn_with_captures() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+
+        // Position with a capture available (exd5)
+        let board: Board = "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"
+            .parse()
+            .unwrap();
+        let qs = bot
+            .quiescence_nn(&board, f32::NEG_INFINITY, f32::INFINITY)
+            .unwrap();
+        assert!(qs.is_finite(), "quiescence with captures should be finite");
+    }
+
+    #[test]
+    fn try_choose_move_returns_legal() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+        let game = GameState::new();
+        let mv = bot
+            .try_choose_move(&game)
+            .expect("should not error")
+            .expect("should return a move");
+        assert!(
+            game.legal_moves().contains(&mv),
+            "chosen move must be legal"
+        );
+    }
+
+    #[test]
+    fn try_choose_move_finds_checkmate() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+
+        // Fool's mate: Black plays Qh4#
+        let game = GameState::from_fen(
+            "rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq - 0 2",
+        )
+        .unwrap();
+        let mv = bot.try_choose_move(&game).unwrap().unwrap();
+        let mut after = game.board.clone();
+        after.play(mv);
+        assert_eq!(
+            after.status(),
+            GameStatus::Won,
+            "NN bot should find checkmate when available"
+        );
+    }
+
+    #[test]
+    fn choose_move_via_bot_trait() {
+        use crate::bot::Bot;
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+        let game = GameState::new();
+        let mv = bot.choose_move(&game).expect("Bot trait should return a move");
+        assert!(game.legal_moves().contains(&mv));
+    }
+
+    #[test]
+    fn nn_plays_full_game_without_crash() {
+        use crate::bot::Bot;
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+        let mut game = GameState::new();
+
+        // Play up to 200 half-moves — just make sure it doesn't crash
+        for _ in 0..200 {
+            if game.is_game_over() {
+                break;
+            }
+            match bot.choose_move(&game) {
+                Some(mv) => {
+                    assert!(game.make_move(mv), "move should be legal");
+                }
+                None => break,
+            }
+        }
+        // If we get here without panicking, the test passes
+    }
 }
