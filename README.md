@@ -20,16 +20,16 @@ The baseline sees several moves ahead with a handcrafted eval. Your network sees
 
 ### Levels
 
-Your model is tested against increasingly strong baselines:
+Your model faces progressively stronger baselines. You must score 70%+ to pass each level.
 
-| Level | Name | Depth | Mode | Description |
-|-------|------|-------|------|-------------|
-| 1 | Beginner | 1 | classic | Depth-1 + quiescence — both sides follow captures |
-| 2 | Novice | 2 | classic | Depth-2 alpha-beta + quiescence |
-| 3 | Advanced | 3 | enhanced | Depth-3 + TT/PVS/NMP/delta pruning |
-| 4 | Expert | 4 | enhanced | Full strength baseline (~1500–1600 Elo) |
+| Level | Name | Baseline |
+|-------|------|----------|
+| 1 | Beginner | Depth 1 + quiescence (same search as your NN, but with handcrafted eval) |
+| 2 | Novice | Depth 2 + quiescence (sees your response to each move) |
+| 3 | Advanced | Depth 3 + TT/PVS/null-move/delta pruning |
+| 4 | Expert | Depth 4 + TT/PVS/null-move/delta pruning (~1500–1600 Elo) |
 
-Levels 1–2 use classic alpha-beta. Levels 3–4 switch to enhanced mode with transposition tables, null-move pruning, PVS, and delta pruning. By default the runner tests all levels and stops at the first failure.
+At Level 1, the only difference between your NN and the baseline is the eval function — both use the same depth-1 + quiescence search. At higher levels, the baseline searches deeper and adds pruning techniques. By default the runner tests all levels and stops at the first failure.
 
 ---
 
