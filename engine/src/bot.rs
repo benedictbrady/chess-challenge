@@ -133,3 +133,56 @@ impl Bot for BaselineBot {
             .map(|(mv, _)| mv)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cozy_chess::GameStatus;
+
+    #[test]
+    fn level_new_boundaries() {
+        assert!(Level::new(0).is_none());
+        for n in 1..=4 {
+            assert!(Level::new(n).is_some(), "Level::new({n}) should be Some");
+        }
+        assert!(Level::new(5).is_none());
+        assert!(Level::new(255).is_none());
+    }
+
+    #[test]
+    fn from_level_depth_and_enhanced() {
+        let expected = [(1, 1, false), (2, 2, false), (3, 3, true), (4, 4, true)];
+        for (n, depth, enhanced) in expected {
+            let bot = BaselineBot::from_level(Level::new(n).unwrap());
+            assert_eq!(bot.depth, depth, "level {n} depth");
+            assert_eq!(bot.enhanced, enhanced, "level {n} enhanced");
+        }
+    }
+
+    #[test]
+    fn choose_move_returns_legal_from_startpos() {
+        let bot = BaselineBot::from_level(Level::new(1).unwrap());
+        let game = GameState::new();
+        let mv = bot.choose_move(&game).expect("should find a move from startpos");
+        assert!(
+            game.legal_moves().contains(&mv),
+            "returned move should be legal"
+        );
+    }
+
+    #[test]
+    fn choose_move_finds_mate_in_one() {
+        // Fool's mate position: after 1.f3 e5 2.g4, Black plays Qh4#
+        let fen = "rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq - 0 2";
+        let game = GameState::from_fen(fen).unwrap();
+        let bot = BaselineBot::from_level(Level::new(1).unwrap());
+        let mv = bot.choose_move(&game).expect("should find a move");
+        let mut after = game.board.clone();
+        after.play(mv);
+        assert_eq!(
+            after.status(),
+            GameStatus::Won,
+            "depth-1 bot should find Qh4# checkmate"
+        );
+    }
+}
