@@ -1,0 +1,14 @@
+# Experiment 04: NNUE with blended WDL loss (SF eval + game outcome)
+# This is the Stockfish NNUE training approach
+data_path: /data/datasets/lichess_2024_01_sf_500k/data.npz
+architecture: nnue_1024x2_32_32
+epochs: 60
+batch_size: 8192
+learning_rate: 1e-3
+weight_decay: 1e-5
+loss_type: blended_wdl_mse
+eval_scale: 400.0
+blend_lambda: 0.75
+warmup_epochs: 3
+grad_clip: 1.0
+checkpoint_dir: /data/checkpoints/exp04_blended
