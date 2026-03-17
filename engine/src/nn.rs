@@ -1,6 +1,7 @@
 use cozy_chess::{Board, Color, GameStatus, Piece, Square};
 use ort::session::Session;
 use ort::value::Tensor;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -177,7 +178,7 @@ pub fn count_parameters(path: &Path) -> Result<u64, Box<dyn std::error::Error + 
 }
 
 // ---------------------------------------------------------------------------
-// NnEvalBot — scalar eval network with depth-1 + quiescence search
+// NnEvalBot — scalar eval network with depth-1 + batched quiescence search
 // ---------------------------------------------------------------------------
 
 const MATE_SCORE_F: f32 = 100_000.0;
@@ -186,8 +187,9 @@ const DRAW_SCORE_F: f32 = 0.0;
 /// A chess bot that runs an ONNX scalar evaluation network with depth-1
 /// search plus quiescence (follows captures to quiet positions).
 ///
-/// The model must accept input "board" [N, 1540] float32 and output a scalar
-/// eval [N, 1] float32 (positive = good for side to move).
+/// Uses batched inference: collects all positions in the quiescence trees
+/// for every legal move, evaluates them in a single ONNX call, then runs
+/// alpha-beta on the cached results.
 pub struct NnEvalBot {
     session: Mutex<Session>,
     pub param_count: u64,
@@ -203,10 +205,10 @@ impl NnEvalBot {
         })
     }
 
-    /// Evaluate a batch of positions in a single ONNX call.
-    /// Each tensor in `tensors` is a flat [1540] encoding.
-    /// Returns one scalar eval per position.
-    /// Falls back to one-at-a-time inference if batching fails.
+    /// Max positions per ONNX batch call (limits memory for the flat tensor).
+    const BATCH_CHUNK: usize = 4096;
+
+    /// Evaluate a batch of positions, chunking if necessary.
     fn nn_eval_batch(
         &self,
         tensors: &[Vec<f32>],
@@ -216,68 +218,84 @@ impl NnEvalBot {
             return Ok(Vec::new());
         }
 
-        // Try batched inference first
-        if let Ok(results) = self.nn_eval_batch_inner(tensors) {
-            return Ok(results);
-        }
+        let mut all_results = Vec::with_capacity(n);
+        for chunk in tensors.chunks(Self::BATCH_CHUNK) {
+            let cn = chunk.len();
+            let mut flat = Vec::with_capacity(cn * TENSOR_SIZE);
+            for t in chunk {
+                flat.extend_from_slice(t);
+            }
 
-        // Fall back to one-at-a-time
-        let mut results = Vec::with_capacity(n);
-        for t in tensors {
-            let r = self.nn_eval_batch_inner(&[t.clone()])?;
-            results.push(r[0]);
+            let input = Tensor::<f32>::from_array(([cn, TENSOR_SIZE], flat))?;
+
+            let mut session = self
+                .session
+                .lock()
+                .map_err(|_| "session mutex poisoned")?;
+
+            let outputs = session.run(ort::inputs!["board" => input])?;
+            let (_, raw) = outputs[0].try_extract_tensor::<f32>()?;
+            all_results.extend_from_slice(&raw.to_vec());
         }
-        Ok(results)
+        Ok(all_results)
     }
 
-    fn nn_eval_batch_inner(
-        &self,
-        tensors: &[Vec<f32>],
-    ) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
-        let n = tensors.len();
+    /// Max positions to collect across all quiescence trees (safety valve).
+    const MAX_COLLECT: usize = 50_000;
+    /// Max depth for quiescence tree collection.
+    const MAX_QS_DEPTH: u32 = 8;
 
-        let mut flat = Vec::with_capacity(n * TENSOR_SIZE);
-        for t in tensors {
-            flat.extend_from_slice(t);
+    /// Recursively walk the quiescence tree, collecting every position
+    /// that needs NN evaluation. Uses board hash for deduplication.
+    fn collect_quiescence_positions(
+        board: &Board,
+        depth: u32,
+        tensors: &mut Vec<Vec<f32>>,
+        hash_to_idx: &mut HashMap<u64, usize>,
+    ) {
+        if tensors.len() >= Self::MAX_COLLECT || depth >= Self::MAX_QS_DEPTH {
+            return;
         }
 
-        let input = Tensor::<f32>::from_array(([n, TENSOR_SIZE], flat))?;
+        let hash = board.hash();
+        if hash_to_idx.contains_key(&hash) {
+            return; // already collected
+        }
 
-        let mut session = self
-            .session
-            .lock()
-            .map_err(|_| "session mutex poisoned")?;
+        let idx = tensors.len();
+        let game = GameState::from_board(board.clone());
+        tensors.push(board_to_tensor(&game));
+        hash_to_idx.insert(hash, idx);
 
-        let outputs = session.run(ort::inputs!["board" => input])?;
-
-        let (_, raw) = outputs[0].try_extract_tensor::<f32>()?;
-        Ok(raw.to_vec())
+        // Recurse into captures
+        for mv in capture_moves(board) {
+            if tensors.len() >= Self::MAX_COLLECT {
+                break;
+            }
+            let mut child = board.clone();
+            child.play_unchecked(mv);
+            if child.status() == GameStatus::Ongoing {
+                Self::collect_quiescence_positions(&child, depth + 1, tensors, hash_to_idx);
+            }
+        }
     }
 
-    /// Evaluate a single position. Returns eval from the perspective of the side to move.
-    pub fn nn_eval(&self, game: &GameState) -> Result<f32, Box<dyn std::error::Error>> {
-        let tensor = board_to_tensor(game);
-        let results = self.nn_eval_batch(&[tensor])?;
-        Ok(results[0])
-    }
-
-    /// Quiescence search using the NN eval. Follows captures until the
-    /// position is quiet, then returns the NN evaluation.
-    fn quiescence_nn(
-        &self,
+    /// Alpha-beta quiescence search using pre-computed cached evaluations.
+    fn quiescence_cached(
         board: &Board,
         mut alpha: f32,
         beta: f32,
-    ) -> Result<f32, Box<dyn std::error::Error>> {
+        cache: &HashMap<u64, f32>,
+    ) -> f32 {
         match board.status() {
-            GameStatus::Won => return Ok(-MATE_SCORE_F),
-            GameStatus::Drawn => return Ok(DRAW_SCORE_F),
+            GameStatus::Won => return -MATE_SCORE_F,
+            GameStatus::Drawn => return DRAW_SCORE_F,
             GameStatus::Ongoing => {}
         }
 
-        let stand_pat = self.nn_eval(&GameState::from_board(board.clone()))?;
+        let stand_pat = cache.get(&board.hash()).copied().unwrap_or(0.0);
         if stand_pat >= beta {
-            return Ok(beta);
+            return beta;
         }
         if stand_pat > alpha {
             alpha = stand_pat;
@@ -286,20 +304,24 @@ impl NnEvalBot {
         for mv in capture_moves(board) {
             let mut child = board.clone();
             child.play_unchecked(mv);
-            let score = -self.quiescence_nn(&child, -beta, -alpha)?;
+            let score = -Self::quiescence_cached(&child, -beta, -alpha, cache);
             if score >= beta {
-                return Ok(beta);
+                return beta;
             }
             if score > alpha {
                 alpha = score;
             }
         }
 
-        Ok(alpha)
+        alpha
     }
 
-    /// Depth-1 search with quiescence: for each legal move, run quiescence
-    /// on the resulting position to follow captures to quiet positions.
+    /// Depth-1 search with batched quiescence.
+    ///
+    /// 1. Expand all legal moves and walk their quiescence trees to collect
+    ///    every position that needs NN evaluation.
+    /// 2. Evaluate all positions in one batched ONNX call.
+    /// 3. Run alpha-beta quiescence on each move using the cached values.
     fn try_choose_move(
         &self,
         game: &GameState,
@@ -309,6 +331,28 @@ impl NnEvalBot {
             return Ok(None);
         }
 
+        // Phase 1: Collect all positions that need NN evaluation
+        let mut tensors: Vec<Vec<f32>> = Vec::new();
+        let mut hash_to_idx: HashMap<u64, usize> = HashMap::new();
+
+        for &mv in &legal {
+            let mut child = game.board.clone();
+            child.play_unchecked(mv);
+            if child.status() == GameStatus::Ongoing {
+                Self::collect_quiescence_positions(&child, 0, &mut tensors, &mut hash_to_idx);
+            }
+        }
+
+        // Phase 2: Batch NN evaluation
+        let evals = self.nn_eval_batch(&tensors)?;
+
+        // Build hash → eval lookup
+        let mut cache: HashMap<u64, f32> = HashMap::with_capacity(hash_to_idx.len());
+        for (&hash, &idx) in &hash_to_idx {
+            cache.insert(hash, evals[idx]);
+        }
+
+        // Phase 3: Score each move using cached quiescence search
         let mut best_mv: Option<Move> = None;
         let mut best_eval = f32::NEG_INFINITY;
 
@@ -320,7 +364,12 @@ impl NnEvalBot {
                 GameStatus::Won => MATE_SCORE_F,
                 GameStatus::Drawn => DRAW_SCORE_F,
                 GameStatus::Ongoing => {
-                    -self.quiescence_nn(&child_board, f32::NEG_INFINITY, f32::INFINITY)?
+                    -Self::quiescence_cached(
+                        &child_board,
+                        f32::NEG_INFINITY,
+                        f32::INFINITY,
+                        &cache,
+                    )
                 }
             };
 
