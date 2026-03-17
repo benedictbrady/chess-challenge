@@ -99,7 +99,7 @@ Both the NN bot and the baseline use quiescence search at every level, so the co
 
 ## Rules
 
-1. **Depth-1 search only** — your model always uses depth-1 search (see "How Your Model Is Used" below). This is enforced by the harness and cannot be changed.
+1. **Depth-1 search only** — your model always uses depth-1 search (see "How Your Model Is Used" above). This is enforced by the harness and cannot be changed.
 2. **50 games per level** — 25 opening positions × 2 colors (NN plays both sides)
 3. **Score 70% or higher** — win=1, draw=0.5, loss=0 (need 35/50 points)
 4. **10M parameter limit** — models exceeding this are rejected
@@ -135,14 +135,6 @@ Run a single level:
 cargo run -p cli --bin compete -- path/to/your_model.onnx --level 1
 ```
 
-A reference model is included for testing the pipeline:
-
-```bash
-cargo run -p cli --bin compete -- models/capture_policy.onnx
-```
-
-This is a hand-crafted capture heuristic (~315K params) — it won't pass the competition but verifies the pipeline works end to end.
-
 ### Play Against the Bot
 
 ASCII terminal:
@@ -159,16 +151,8 @@ cargo run -p gui
 
 Watch your model play against the baseline in the GUI:
 ```bash
-cargo run -p gui -- models/capture_policy.onnx
-cargo run -p gui -- models/capture_policy.onnx --delay 300  # slower playback
-```
-
-### Validate Bot Elo (vs Stockfish)
-
-Benchmark the baseline against Stockfish to verify it's in the target Elo range:
-
-```bash
-cargo run -p cli --bin validate -- --games 50
+cargo run -p gui -- path/to/your_model.onnx
+cargo run -p gui -- path/to/your_model.onnx --delay 300  # slower playback
 ```
 
 ---
