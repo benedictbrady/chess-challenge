@@ -2,6 +2,7 @@ use cozy_chess::{Board, Color, GameStatus, Piece, Square};
 use ort::session::Session;
 use ort::value::Tensor;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use crate::bot::Bot;
@@ -191,6 +192,10 @@ const DRAW_SCORE_F: f32 = 0.0;
 pub struct NnEvalBot {
     session: Mutex<Session>,
     pub param_count: u64,
+    /// Number of ONNX session.run() calls (for benchmarking).
+    inference_calls: AtomicU64,
+    /// Total positions evaluated across all batch calls.
+    positions_evaluated: AtomicU64,
 }
 
 impl NnEvalBot {
@@ -200,7 +205,23 @@ impl NnEvalBot {
         Ok(NnEvalBot {
             session: Mutex::new(session),
             param_count,
+            inference_calls: AtomicU64::new(0),
+            positions_evaluated: AtomicU64::new(0),
         })
+    }
+
+    /// Reset inference counters.
+    pub fn reset_counters(&self) {
+        self.inference_calls.store(0, Ordering::Relaxed);
+        self.positions_evaluated.store(0, Ordering::Relaxed);
+    }
+
+    /// Get (inference_calls, positions_evaluated).
+    pub fn counters(&self) -> (u64, u64) {
+        (
+            self.inference_calls.load(Ordering::Relaxed),
+            self.positions_evaluated.load(Ordering::Relaxed),
+        )
     }
 
     /// Evaluate a batch of positions in a single ONNX call.
@@ -236,6 +257,10 @@ impl NnEvalBot {
     ) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
         let n = tensors.len();
 
+        self.inference_calls.fetch_add(1, Ordering::Relaxed);
+        self.positions_evaluated
+            .fetch_add(n as u64, Ordering::Relaxed);
+
         let mut flat = Vec::with_capacity(n * TENSOR_SIZE);
         for t in tensors {
             flat.extend_from_slice(t);
@@ -261,11 +286,9 @@ impl NnEvalBot {
         Ok(results[0])
     }
 
-    /// Quiescence search using the NN eval with check extensions and delta pruning.
-    ///
-    /// - In check: search ALL evasion moves (not just captures)
-    /// - Delta pruning: skip captures that can't possibly improve alpha
-    fn quiescence_nn(
+    /// Sequential quiescence search (reference implementation for testing).
+    #[cfg(test)]
+    fn quiescence_nn_sequential(
         &self,
         board: &Board,
         mut alpha: f32,
@@ -280,7 +303,6 @@ impl NnEvalBot {
         let in_check = !board.checkers().is_empty();
 
         let stand_pat = if in_check {
-            // No stand-pat cutoff when in check — position is not quiet
             f32::NEG_INFINITY
         } else {
             let sp = self.nn_eval(&GameState::from_board(board.clone()))?;
@@ -290,14 +312,12 @@ impl NnEvalBot {
             if sp > alpha {
                 alpha = sp;
             }
-            // Big delta pruning: if even capturing a queen can't reach alpha, prune
             if sp + 1100.0 < alpha {
                 return Ok(alpha);
             }
             sp
         };
 
-        // In check: must search all evasions. Otherwise: only captures/promotions.
         let moves = if in_check {
             let mut all = Vec::new();
             board.generate_moves(|piece_moves| {
@@ -310,7 +330,6 @@ impl NnEvalBot {
         };
 
         for mv in moves {
-            // Small delta pruning: skip captures that can't improve alpha
             if !in_check {
                 if let Some(victim) = board.piece_on(mv.to) {
                     let gain = match victim {
@@ -329,7 +348,7 @@ impl NnEvalBot {
 
             let mut child = board.clone();
             child.play_unchecked(mv);
-            let score = -self.quiescence_nn(&child, -beta, -alpha)?;
+            let score = -self.quiescence_nn_sequential(&child, -beta, -alpha)?;
             if score >= beta {
                 return Ok(beta);
             }
@@ -341,8 +360,125 @@ impl NnEvalBot {
         Ok(alpha)
     }
 
-    /// Depth-1 search with alpha-beta at root + quiescence.
-    fn try_choose_move(
+    /// Quiescence search with sibling-level batching.
+    ///
+    /// `stand_pat_hint`: if `Some(v)`, use `v` as this node's stand-pat eval
+    /// (pre-computed by the parent via batch). If `None`, compute on demand.
+    ///
+    /// At each node, before the alpha-beta loop, batch-evaluates stand-pats for
+    /// all non-check, non-terminal children in a single `nn_eval_batch` call.
+    fn quiescence_nn(
+        &self,
+        board: &Board,
+        mut alpha: f32,
+        beta: f32,
+        stand_pat_hint: Option<f32>,
+    ) -> Result<f32, Box<dyn std::error::Error>> {
+        match board.status() {
+            GameStatus::Won => return Ok(-MATE_SCORE_F),
+            GameStatus::Drawn => return Ok(DRAW_SCORE_F),
+            GameStatus::Ongoing => {}
+        }
+
+        let in_check = !board.checkers().is_empty();
+
+        let stand_pat = if in_check {
+            f32::NEG_INFINITY
+        } else {
+            let sp = match stand_pat_hint {
+                Some(v) => v,
+                None => self.nn_eval(&GameState::from_board(board.clone()))?,
+            };
+            if sp >= beta {
+                return Ok(beta);
+            }
+            if sp > alpha {
+                alpha = sp;
+            }
+            if sp + 1100.0 < alpha {
+                return Ok(alpha);
+            }
+            sp
+        };
+
+        let moves = if in_check {
+            let mut all = Vec::new();
+            board.generate_moves(|piece_moves| {
+                all.extend(piece_moves);
+                false
+            });
+            all
+        } else {
+            capture_moves(board)
+        };
+
+        // Apply delta pruning and collect surviving children
+        let mut children: Vec<Board> = Vec::with_capacity(moves.len());
+        for mv in &moves {
+            if !in_check {
+                if let Some(victim) = board.piece_on(mv.to) {
+                    let gain = match victim {
+                        Piece::Pawn => 100.0,
+                        Piece::Knight => 320.0,
+                        Piece::Bishop => 330.0,
+                        Piece::Rook => 500.0,
+                        Piece::Queen => 900.0,
+                        Piece::King => 0.0,
+                    };
+                    if stand_pat + gain + 200.0 < alpha {
+                        continue;
+                    }
+                }
+            }
+            let mut child = board.clone();
+            child.play_unchecked(*mv);
+            children.push(child);
+        }
+
+        if children.is_empty() {
+            return Ok(alpha);
+        }
+
+        // Batch-eval stand-pats for non-terminal, non-check children
+        let mut hints: Vec<Option<f32>> = vec![None; children.len()];
+        let mut batch_indices: Vec<usize> = Vec::new();
+        let mut batch_tensors: Vec<Vec<f32>> = Vec::new();
+
+        for (i, child) in children.iter().enumerate() {
+            if child.status() != GameStatus::Ongoing {
+                continue;
+            }
+            if !child.checkers().is_empty() {
+                continue;
+            }
+            batch_indices.push(i);
+            batch_tensors.push(board_to_tensor(&GameState::from_board(child.clone())));
+        }
+
+        if !batch_tensors.is_empty() {
+            let evals = self.nn_eval_batch(&batch_tensors)?;
+            for (&idx, &eval) in batch_indices.iter().zip(evals.iter()) {
+                hints[idx] = Some(eval);
+            }
+        }
+
+        // Alpha-beta loop with pre-computed hints
+        for (i, child) in children.iter().enumerate() {
+            let score = -self.quiescence_nn(child, -beta, -alpha, hints[i])?;
+            if score >= beta {
+                return Ok(beta);
+            }
+            if score > alpha {
+                alpha = score;
+            }
+        }
+
+        Ok(alpha)
+    }
+
+    /// Sequential depth-1 search (reference implementation for testing).
+    #[cfg(test)]
+    fn try_choose_move_sequential(
         &self,
         game: &GameState,
     ) -> Result<Option<Move>, Box<dyn std::error::Error>> {
@@ -362,7 +498,7 @@ impl NnEvalBot {
                 GameStatus::Won => MATE_SCORE_F,
                 GameStatus::Drawn => DRAW_SCORE_F,
                 GameStatus::Ongoing => {
-                    -self.quiescence_nn(&child_board, f32::NEG_INFINITY, -alpha)?
+                    -self.quiescence_nn_sequential(&child_board, f32::NEG_INFINITY, -alpha)?
                 }
             };
 
@@ -371,7 +507,81 @@ impl NnEvalBot {
                 best_mv = Some(mv);
             }
 
-            // Immediate checkmate — no need to keep searching
+            if eval >= MATE_SCORE_F {
+                break;
+            }
+        }
+
+        if best_mv.is_none() {
+            best_mv = legal.into_iter().next();
+        }
+
+        Ok(best_mv)
+    }
+
+    /// Depth-1 search with alpha-beta at root + batched quiescence.
+    ///
+    /// Batch-evaluates stand-pats for all root children in one ONNX call,
+    /// then passes pre-computed hints into quiescence search.
+    fn try_choose_move(
+        &self,
+        game: &GameState,
+    ) -> Result<Option<Move>, Box<dyn std::error::Error>> {
+        let legal = game.legal_moves();
+        if legal.is_empty() {
+            return Ok(None);
+        }
+
+        // Make all child boards
+        let child_boards: Vec<(Move, Board)> = legal
+            .iter()
+            .map(|&mv| {
+                let mut child = game.board.clone();
+                child.play_unchecked(mv);
+                (mv, child)
+            })
+            .collect();
+
+        // Batch-eval stand-pats for ongoing, non-check children
+        let mut hints: Vec<Option<f32>> = vec![None; child_boards.len()];
+        let mut batch_indices: Vec<usize> = Vec::new();
+        let mut batch_tensors: Vec<Vec<f32>> = Vec::new();
+
+        for (i, (_, child)) in child_boards.iter().enumerate() {
+            if child.status() != GameStatus::Ongoing {
+                continue;
+            }
+            if !child.checkers().is_empty() {
+                continue;
+            }
+            batch_indices.push(i);
+            batch_tensors.push(board_to_tensor(&GameState::from_board(child.clone())));
+        }
+
+        if !batch_tensors.is_empty() {
+            let evals = self.nn_eval_batch(&batch_tensors)?;
+            for (&idx, &eval) in batch_indices.iter().zip(evals.iter()) {
+                hints[idx] = Some(eval);
+            }
+        }
+
+        let mut best_mv: Option<Move> = None;
+        let mut alpha = f32::NEG_INFINITY;
+
+        for (i, (mv, child_board)) in child_boards.iter().enumerate() {
+            let eval = match child_board.status() {
+                GameStatus::Won => MATE_SCORE_F,
+                GameStatus::Drawn => DRAW_SCORE_F,
+                GameStatus::Ongoing => {
+                    -self.quiescence_nn(child_board, f32::NEG_INFINITY, -alpha, hints[i])?
+                }
+            };
+
+            if eval > alpha {
+                alpha = eval;
+                best_mv = Some(*mv);
+            }
+
             if eval >= MATE_SCORE_F {
                 break;
             }
@@ -736,7 +946,7 @@ mod tests {
         let game = GameState::new();
         let stand_pat = bot.nn_eval(&game).unwrap();
         let qs = bot
-            .quiescence_nn(&game.board, f32::NEG_INFINITY, f32::INFINITY)
+            .quiescence_nn(&game.board, f32::NEG_INFINITY, f32::INFINITY, None)
             .unwrap();
 
         assert!(
@@ -755,7 +965,7 @@ mod tests {
             .parse()
             .unwrap();
         let qs = bot
-            .quiescence_nn(&board, f32::NEG_INFINITY, f32::INFINITY)
+            .quiescence_nn(&board, f32::NEG_INFINITY, f32::INFINITY, None)
             .unwrap();
         assert!(qs.is_finite(), "quiescence with captures should be finite");
     }
@@ -825,5 +1035,294 @@ mod tests {
             }
         }
         // If we get here without panicking, the test passes
+    }
+
+    // ── Golden reference tests ────────────────────────────────────────────
+
+    /// Test positions used for golden/equivalence tests
+    fn golden_positions() -> Vec<(&'static str, Board)> {
+        vec![
+            ("startpos", Board::default()),
+            ("after 1.e4", "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1".parse().unwrap()),
+            ("capture available", "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2".parse().unwrap()),
+            ("endgame K+P vs K", "8/8/4k3/8/8/4K3/4P3/8 w - - 0 1".parse().unwrap()),
+            ("complex middlegame", "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3".parse().unwrap()),
+            ("queen trade", "rnb1kbnr/pppppppp/8/8/4q3/3P4/PPP1PPPP/RNBQKBNR w KQkq - 0 1".parse().unwrap()),
+            ("promotion possible", "8/P7/8/8/8/8/8/4K2k w - - 0 1".parse().unwrap()),
+            ("black in check", "rnbqkbnr/pppp1ppp/8/4N3/4P3/8/PPPP1PPP/RNBQKB1R b KQkq - 0 1".parse().unwrap()),
+        ]
+    }
+
+    #[test]
+    fn quiescence_scores_deterministic() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+
+        for (name, board) in golden_positions() {
+            let s1 = bot
+                .quiescence_nn(&board, f32::NEG_INFINITY, f32::INFINITY, None)
+                .unwrap();
+            let s2 = bot
+                .quiescence_nn(&board, f32::NEG_INFINITY, f32::INFINITY, None)
+                .unwrap();
+            assert_eq!(s1, s2, "{name}: quiescence must be deterministic");
+        }
+    }
+
+    #[test]
+    fn quiescence_sequential_golden() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+
+        // Record scores for all golden positions — assert finite and deterministic
+        let mut scores = Vec::new();
+        for (name, board) in golden_positions() {
+            let s = bot
+                .quiescence_nn_sequential(&board, f32::NEG_INFINITY, f32::INFINITY)
+                .unwrap();
+            assert!(s.is_finite(), "{name}: score should be finite, got {s}");
+            scores.push(s);
+        }
+
+        // Run again — must be identical
+        for (i, (name, board)) in golden_positions().iter().enumerate() {
+            let s = bot
+                .quiescence_nn_sequential(board, f32::NEG_INFINITY, f32::INFINITY)
+                .unwrap();
+            assert_eq!(s, scores[i], "{name}: sequential score not deterministic");
+        }
+    }
+
+    #[test]
+    fn try_choose_move_golden() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+
+        let positions = [
+            GameState::new(),
+            GameState::from_board(
+                "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"
+                    .parse().unwrap(),
+            ),
+            GameState::from_board(
+                "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+                    .parse().unwrap(),
+            ),
+        ];
+
+        // Each position should return a legal move, deterministically
+        for game in &positions {
+            let mv1 = bot.try_choose_move(game).unwrap().unwrap();
+            let mv2 = bot.try_choose_move(game).unwrap().unwrap();
+            assert_eq!(mv1, mv2, "try_choose_move must be deterministic");
+            assert!(game.legal_moves().contains(&mv1), "move must be legal");
+        }
+    }
+
+    // ── Equivalence tests: batched == sequential ──────────────────────────
+
+    #[test]
+    fn quiescence_batched_equals_sequential() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+
+        for (name, board) in golden_positions() {
+            let seq = bot
+                .quiescence_nn_sequential(&board, f32::NEG_INFINITY, f32::INFINITY)
+                .unwrap();
+            let bat = bot
+                .quiescence_nn(&board, f32::NEG_INFINITY, f32::INFINITY, None)
+                .unwrap();
+            assert!(
+                (seq - bat).abs() < 1e-5,
+                "{name}: sequential={seq}, batched={bat}"
+            );
+        }
+    }
+
+    #[test]
+    fn quiescence_batched_equals_sequential_narrow_window() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+
+        for (name, board) in golden_positions() {
+            // Use a narrow alpha-beta window
+            let seq = bot
+                .quiescence_nn_sequential(&board, -10.0, 10.0)
+                .unwrap();
+            let bat = bot
+                .quiescence_nn(&board, -10.0, 10.0, None)
+                .unwrap();
+            assert!(
+                (seq - bat).abs() < 1e-5,
+                "{name} (narrow): sequential={seq}, batched={bat}"
+            );
+        }
+    }
+
+    #[test]
+    fn quiescence_batched_with_hint_equals_without() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+
+        for (name, board) in golden_positions() {
+            if board.status() != GameStatus::Ongoing || !board.checkers().is_empty() {
+                continue;
+            }
+            let sp = bot.nn_eval(&GameState::from_board(board.clone())).unwrap();
+            let without_hint = bot
+                .quiescence_nn(&board, f32::NEG_INFINITY, f32::INFINITY, None)
+                .unwrap();
+            let with_hint = bot
+                .quiescence_nn(&board, f32::NEG_INFINITY, f32::INFINITY, Some(sp))
+                .unwrap();
+            assert!(
+                (without_hint - with_hint).abs() < 1e-5,
+                "{name}: without_hint={without_hint}, with_hint={with_hint}"
+            );
+        }
+    }
+
+    #[test]
+    fn try_choose_move_batched_equals_sequential() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+
+        let positions = [
+            GameState::new(),
+            GameState::from_board(
+                "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"
+                    .parse().unwrap(),
+            ),
+            GameState::from_board(
+                "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+                    .parse().unwrap(),
+            ),
+            // Fool's mate position
+            GameState::from_fen(
+                "rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq - 0 2",
+            ).unwrap(),
+        ];
+
+        for game in &positions {
+            let seq = bot.try_choose_move_sequential(game).unwrap();
+            let bat = bot.try_choose_move(game).unwrap();
+            assert_eq!(
+                seq, bat,
+                "batched and sequential should choose same move for {}",
+                game.board
+            );
+        }
+    }
+
+    #[test]
+    fn quiescence_batched_handles_terminal_positions() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+
+        // Checkmate
+        let mated: Board = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3"
+            .parse().unwrap();
+        assert_eq!(mated.status(), GameStatus::Won);
+        let score = bot
+            .quiescence_nn(&mated, f32::NEG_INFINITY, f32::INFINITY, None)
+            .unwrap();
+        assert_eq!(score, -MATE_SCORE_F);
+
+        // Stalemate
+        let stale: Board = "k7/8/1K6/8/8/8/8/8 b - - 0 1".parse().unwrap();
+        if stale.status() == GameStatus::Drawn {
+            let score = bot
+                .quiescence_nn(&stale, f32::NEG_INFINITY, f32::INFINITY, None)
+                .unwrap();
+            assert_eq!(score, DRAW_SCORE_F);
+        }
+    }
+
+    #[test]
+    fn quiescence_batched_handles_check_positions() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+
+        // Black in check — stand_pat_hint should be ignored (in-check uses NEG_INFINITY)
+        let board: Board = "rnbqkbnr/pppp1ppp/8/4N3/4P3/8/PPPP1PPP/RNBQKB1R b KQkq - 0 1"
+            .parse().unwrap();
+
+        if !board.checkers().is_empty() {
+            let without = bot
+                .quiescence_nn(&board, f32::NEG_INFINITY, f32::INFINITY, None)
+                .unwrap();
+            // Even with a bogus hint, check positions ignore it
+            let with_bogus = bot
+                .quiescence_nn(&board, f32::NEG_INFINITY, f32::INFINITY, Some(999.0))
+                .unwrap();
+            assert!(
+                (without - with_bogus).abs() < 1e-5,
+                "check position should ignore stand_pat_hint"
+            );
+        }
+    }
+
+    // ── Performance benchmark (run with --nocapture to see output) ────────
+
+    #[test]
+    fn bench_batched_vs_sequential_call_counts() {
+        let path = fixture_path();
+        let bot = NnEvalBot::load(&path).unwrap();
+
+        let positions: Vec<GameState> = vec![
+            GameState::new(),
+            GameState::from_board(
+                "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"
+                    .parse().unwrap(),
+            ),
+            GameState::from_board(
+                "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+                    .parse().unwrap(),
+            ),
+            GameState::from_board(
+                "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4"
+                    .parse().unwrap(),
+            ),
+            GameState::from_fen(
+                "rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq - 0 2",
+            ).unwrap(),
+        ];
+
+        let mut total_seq_calls = 0u64;
+        let mut total_bat_calls = 0u64;
+        let mut total_seq_positions = 0u64;
+        let mut total_bat_positions = 0u64;
+
+        for g in &positions {
+            // Sequential
+            bot.reset_counters();
+            let _ = bot.try_choose_move_sequential(g);
+            let (seq_calls, seq_pos) = bot.counters();
+            total_seq_calls += seq_calls;
+            total_seq_positions += seq_pos;
+
+            // Batched
+            bot.reset_counters();
+            let _ = bot.try_choose_move(g);
+            let (bat_calls, bat_pos) = bot.counters();
+            total_bat_calls += bat_calls;
+            total_bat_positions += bat_pos;
+        }
+
+        let call_reduction = total_seq_calls as f64 / total_bat_calls as f64;
+        let avg_batch_size = total_bat_positions as f64 / total_bat_calls as f64;
+
+        eprintln!("\n--- ONNX inference call counts ({} positions) ---", positions.len());
+        eprintln!("  Sequential: {total_seq_calls} calls, {total_seq_positions} positions (batch=1)");
+        eprintln!("  Batched:    {total_bat_calls} calls, {total_bat_positions} positions (avg batch={avg_batch_size:.1})");
+        eprintln!("  Call reduction: {call_reduction:.1}x fewer ONNX calls");
+        eprintln!("---");
+
+        // Batched should make fewer ONNX calls
+        assert!(
+            total_bat_calls < total_seq_calls,
+            "batched should make fewer ONNX calls: {total_bat_calls} >= {total_seq_calls}"
+        );
     }
 }
