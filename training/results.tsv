@@ -59,3 +59,11 @@ exp57_direct_mse_2048	-	1.8M	1M SF (Jan+Jun 2024)	direct_mse	-	60	completed	Mass
 exp58_huber	18.5/50	1.8M	1M SF (Jan+Jun 2024)	huber	-	60	completed	Also overfits. sigmoid_mse confirmed as best loss
 exp59_2048_1M_v2	25.7avg	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	60	completed	New init — average of 3 runs with full search improvements
 exp60_2048_1M_v3	22.7avg	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	60	completed	Weaker init — search improvements: alpha-beta+check+delta+promo
+exp61_2048_1.5M_3mo	27.5/50	1.8M	1.5M SF (3 months)	sigmoid_mse	400.0	60	completed	BEST so far. Re-tested on training-run-3 engine (sequential qsearch + enhancements)
+exp62_2M_sf	15.5/50	1.8M	2M SF (Jan+Jun+Sep+Dec 2024)	sigmoid_mse	400.0	60	completed	4 months 2024 data worse than exp61's diverse mix
+exp63_2M_sf_30ep	18.5/50	1.8M	2M SF (Jan+Jun+Sep+Dec 2024)	sigmoid_mse	400.0	30	completed	Fewer epochs slightly better — 60ep overfit on 2M
+exp64_repeat	11.0/50	1.8M	500K SF (Jan 2024)	sigmoid_mse	400.0	60	completed	Bad random init
+exp65_1024	14.5/50	856K	500K SF (Jan 2024)	sigmoid_mse	400.0	60	completed	Smaller model
+exp66_screlu	15.5/50	1.8M	500K SF (Jan 2024)	sigmoid_mse	400.0	60	completed	SCReLU activation — no improvement
+exp67_outcome_2048	10.5/50	1.8M	1.5M outcomes	outcome_bce	1.0	15	completed	Outcome loss much weaker than SF evals
+exp68_4096_2M	22.0/50	4.2M	2M SF (Jan+Jun+Sep+Dec 2024)	sigmoid_mse	400.0	60	completed	Bigger model helps — 2nd best, but slow inference
