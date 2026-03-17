@@ -1,0 +1,61 @@
+experiment	score	params	data	loss	eval_scale	epochs	status	notes
+exp01_nnue256_outcome	0.0/50	214K	lichess_2015_01 500K	outcome_bce	400.0	30	completed	near-constant output; eval_scale=400 squashes outcomes
+exp02_nnue1024_outcome	2.0/50	856K	lichess_2015_01 500K	outcome_bce	400.0	40	completed	first sign of life; eval_scale=400 still too flat
+exp03_nnue1024_screlu	-	856K	lichess_2015_01 500K	outcome_bce	400.0	40	collapsed	SCReLU activation collapsed during training
+exp04_nnue1024_200ep	1.5/50	856K	lichess_2015_01 500K	outcome_bce	400.0	200	completed	more epochs didn't help with scale=400
+exp05_nnue4096_200ep	-	4.2M	lichess_2015_01 500K	outcome_bce	400.0	200	not tested	large model on small data, likely overfit
+exp06_bucket512_200ep	-	~500K	lichess_2015_01 500K	outcome_bce	400.0	200	not tested	bucket model, eval_scale=400 expected poor
+exp07_nnue1024_scale1 (early)	10.0/50	856K	lichess_2015_01 500K	outcome_bce	1.0	~15	completed	BREAKTHROUGH: eval_scale=1.0 gave 5x improvement
+exp07_nnue1024_scale1 (final)	1.0/50	856K	lichess_2015_01 500K	outcome_bce	1.0	100	overfit	fully trained model collapsed; early checkpoint was 10x better
+exp08_nnue4096_scale1	1.5/50	4.2M	lichess_2015_01 500K	outcome_bce	1.0	100	completed	large model overfitting on 500K; medium model better
+exp09_nnue1024_1.5M	19.5/50	856K	merged 1.5M (2015+2016)	outcome_bce	1.0	~15	completed	*** BEST RESULT *** early checkpoint; 1.5M data + scale=1.0
+exp10_nnue2048_1.5M	-	~1.7M	merged 1.5M (2015+2016)	outcome_bce	1.0	100	not tested	larger model on 1.5M
+exp11_sf_sigmoid_1024	0.0/50	856K	selfplay_sf 200K	sigmoid_mse	400.0	100	collapsed	self-play positions are unrealistic; total failure
+exp12_blended_wdl	0.5/50	856K	sf_relabeled 200K	blended_wdl_mse	400.0	50	completed	garbage reconstructed SF data (~50% errors)
+exp13_sf_sigmoid_200k	0.0/50	856K	sf_relabeled 200K	sigmoid_mse	400.0	150	collapsed	same garbage relabeled data
+exp14_nnue1024_5.5M	-	856K	merged 5.5M	outcome_bce	1.0	30	failed	data merge OOM (34GB needed)
+exp15_nnue2048_5.5M	-	~1.7M	merged 5.5M	outcome_bce	1.0	30	failed	same merge OOM
+exp16_nnue1024_2M_2024	8.5/50	856K	lichess_2024_06 2M	outcome_bce	1.0	30	completed	single 2024 dataset less effective than 2015+2016 combo
+exp17_nnue1024_2M_2017	~3/30	856K	lichess_2017_01 2M	outcome_bce	1.0	30	partial	only partially tested; 2017 data alone worse
+exp18_finetune_2M_2017	9.5/50	856K	lichess_2017_01 2M	outcome_bce	1.0	20	completed	fine-tuned from exp09; degraded (19.5->9.5)
+exp19_finetune_2M_2024	12.0/50	856K	lichess_2024_06 2M	outcome_bce	1.0	20	completed	fine-tuned from exp09; degraded (19.5->12.0)
+exp20_nnue1024_2M_10ep	10.5/50	856K	lichess_2024_06 2M	outcome_bce	1.0	10	completed	fewer epochs to avoid overfit
+exp21_nnue1024_3.5M_15ep	-	856K	merged 3.5M	outcome_bce	1.0	15	merge issues	training completed but merge may have been corrupt
+exp22_nnue1024_3.5M	11.0/50	856K	merged 3.5M (2015+2016+2017)	outcome_bce	1.0	15	completed	3.5M didn't beat exp09's 1.5M result
+exp23_sf_sigmoid400	0.0/50	856K	sf_relabeled 200K	sigmoid_mse	400.0	50	collapsed	garbage data + sigmoid squashing
+exp24_blended_wdl400	0.0/50	856K	sf_relabeled 200K	blended_wdl_mse	400.0	50	collapsed	garbage data
+exp25_sf_sigmoid400_small	0.0/50	428K	sf_relabeled 200K	sigmoid_mse	400.0	50	collapsed	smaller model still collapsed on garbage data
+exp26_real_sf_sigmoid400	0.0/50	856K	lichess_2024_01_sf 100K	sigmoid_mse	400.0	40	collapsed	real SF data but sigmoid(x/400) -> constant output (0.264-0.269)
+exp27_real_blended_wdl400	0.0/50	856K	lichess_2024_01_sf 100K	blended_wdl_mse	400.0	40	collapsed	same collapse with blended loss
+exp28_real_sf_small	0.0/50	428K	lichess_2024_01_sf 100K	sigmoid_mse	400.0	40	collapsed	smaller model, same collapse
+exp29_real_outcome_scale1	4.5/50	856K	lichess_2024_01_sf 100K	outcome_bce	1.0	30	completed	only 100K data; confirms outcome_bce+scale1 works
+exp30_sf_sigmoid50	0.0/50	856K	lichess_2024_01_sf 100K	sigmoid_mse	50.0	40	collapsed	even scale=50 caused collapse
+exp31_5.5M_multi	8.5-12.5/50	856K	5.5M multi-dataset (4 files)	outcome_bce	1.0	15	completed	5.5M WORSE than 1.5M; bottleneck is not data volume
+exp32_500k_sf_outcome	3.0/50	856K	lichess_2024_01_sf 500K	outcome_bce	1.0	20	completed	2024 data alone with 20 epochs; overfit
+exp33_sigmoid_mse_init	15.0/50	856K	lichess_2024_01_sf 500K	sigmoid_mse	400.0	40	completed	BREAKTHROUGH: _init_weights fix works! First functional sigmoid_mse model. 9W/0D/41L
+exp34_direct_mse	8.5/50	856K	lichess_2024_01_sf 500K	direct_mse	-	40	completed	First non-outcome loss that works. 3W/0D/47L; good diversity (31 first moves)
+exp35_curriculum_sf	0.0/50	856K	lichess_2024_01_sf 500K	sigmoid_mse	400.0	30	dead	Curriculum from exp09; sigmoid(x/400) gradient=0 at outcome-scale outputs. LR=1e-4 too low
+exp36_sigmoid_mse_80ep	15.5/50	856K	lichess_2024_01_sf 500K	sigmoid_mse	400.0	80	completed	Same as exp33 (15.0). More epochs didn't help — data-limited, not training-limited
+exp37_curriculum_direct_mse	0.5/50	856K	lichess_2024_01_sf 500K	direct_mse	-	30	completed	Curriculum from exp09; output stuck at [-12,42] cp — scale too compressed
+exp38_curriculum_sf_highLR	-	856K	lichess_2024_01_sf 500K	sigmoid_mse	400.0	30	dead	Even lr=1e-3 can't escape sigmoid plateau from outcome weights
+exp39_sigmoid_mse_600k	15.0/50	856K	lichess_2024_01_sf 600K (500k+100k)	sigmoid_mse	400.0	60	completed	Same as 500K. 100K extra same-month data didn't help
+exp40_sigmoid_mse_2048	24.5/50	1.8M	lichess_2024_01_sf 500K	sigmoid_mse	400.0	60	completed	*** NEW BEST *** 17W/0D/33L. Larger model huge jump (15→24.5). Capacity was the bottleneck!
+exp41_blended_wdl_init	11.5/50	856K	lichess_2024_01_sf 500K	blended_wdl_mse	400.0	60	completed	Blended loss worse than pure sigmoid_mse at same size. Outcome signal hurts
+exp42_sigmoid_mse_4096	17.0/50	4.2M	lichess_2024_01_sf 500K	sigmoid_mse	400.0	60	completed	Worse than 2048 (24.5)! Overfits on 500K + 3x slower inference hurts qsearch
+exp43_2048_600k	21.5/50	1.8M	lichess_2024_01_sf 600K (500k+100k)	sigmoid_mse	400.0	60	completed	Same ballpark as exp40; 100K extra same-month data doesn't help
+exp44_2048_100ep	19.0/50	1.8M	lichess_2024_01_sf 500K	sigmoid_mse	400.0	100	completed	Overfits despite best val loss (0.007422). 60ep is optimal for 500K
+exp45_2048_bs8192	20.0/50	1.8M	lichess_2024_01_sf 500K	sigmoid_mse	400.0	60	completed	Batch 8192 — same range as exp40
+exp46_2048_lr1e3	16.5/50	1.8M	lichess_2024_01_sf 500K	sigmoid_mse	400.0	60	completed	LR 1e-3 — worse than 5e-4
+exp47_2048_wd1e3	-	1.8M	lichess_2024_01_sf 500K	sigmoid_mse	400.0	60	completed	WD 1e-3 — val 0.017, way too much regularization
+exp48_2048_lr1e3_bs8192	14.5/50	1.8M	lichess_2024_01_sf 500K	sigmoid_mse	400.0	60	completed	LR 1e-3 + batch 8192 — worse
+exp49_2048_1M_sf	22.5/50	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	60	completed	1M data, 14W. Still improving at ep59 — undertrained
+exp50_4096_1M_sf	15.0/50	4.2M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	60	completed	4096 still worse than 2048 even with 1M. Inference speed penalty
+exp51_2048_1M_120ep	15.5/50	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	120	completed	Overfit — 120ep too many even for 1M. Cosine LR extends high-LR phase
+exp52_4096_1M_100ep	17.5/50	4.2M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	100	completed	With search fix: 17.5. Slower inference still hurts
+exp54_2048_1M_close500	18.5/50	1.8M	835K SF (|eval|<500cp filtered)	sigmoid_mse	400.0	60	completed	Best val loss (0.007) but same play strength. Filter helps loss, not games
+exp55_scale200	20.0/50	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	200.0	60	completed	Steeper sigmoid — same as scale=400
+exp56_scale100	13.5/50	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	100.0	60	completed	Too steep — overfits
+exp57_direct_mse_2048	-	1.8M	1M SF (Jan+Jun 2024)	direct_mse	-	60	completed	Massive overfit — val plateaued at ep15
+exp58_huber	18.5/50	1.8M	1M SF (Jan+Jun 2024)	huber	-	60	completed	Also overfits. sigmoid_mse confirmed as best loss
+exp59_2048_1M_v2	25.7avg	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	60	completed	New init — average of 3 runs with full search improvements
+exp60_2048_1M_v3	22.7avg	1.8M	1M SF (Jan+Jun 2024)	sigmoid_mse	400.0	60	completed	Weaker init — search improvements: alpha-beta+check+delta+promo

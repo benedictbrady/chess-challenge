@@ -1,0 +1,13 @@
+# Experiment 06: SCReLU activation (used by newer NNUE engines)
+# SCReLU = clamp(x,0,1)^2 — richer gradients than ClippedReLU
+data_path: /data/datasets/lichess_2024_01_outcomes/data.npz
+architecture: nnue_1024x2_32_32_screlu
+epochs: 40
+batch_size: 16384
+learning_rate: 1e-3
+weight_decay: 1e-5
+loss_type: outcome_bce
+eval_scale: 400.0
+warmup_epochs: 3
+grad_clip: 1.0
+checkpoint_dir: /data/checkpoints/exp06_screlu
