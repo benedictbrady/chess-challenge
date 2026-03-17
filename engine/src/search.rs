@@ -239,55 +239,6 @@ pub fn best_move_with_scores_classic(board: &Board, depth: u32) -> Vec<(Move, i3
 // ENHANCED SEARCH — TT, PVS, null move pruning, delta pruning, killers, history
 // ===========================================================================
 
-const DELTA_MARGIN: i32 = 1100;
-
-fn quiescence_enhanced(board: &Board, mut alpha: i32, beta: i32) -> i32 {
-    match board.status() {
-        GameStatus::Won => return -MATE_SCORE,
-        GameStatus::Drawn => return DRAW_SCORE,
-        GameStatus::Ongoing => {}
-    }
-
-    let stand_pat = evaluate(board);
-    if stand_pat >= beta {
-        return beta;
-    }
-    if stand_pat + DELTA_MARGIN < alpha {
-        return alpha;
-    }
-    if stand_pat > alpha {
-        alpha = stand_pat;
-    }
-
-    for mv in capture_moves(board) {
-        if let Some(victim) = board.piece_on(mv.to) {
-            let gain = match victim {
-                Piece::Pawn => 100,
-                Piece::Knight => 320,
-                Piece::Bishop => 330,
-                Piece::Rook => 500,
-                Piece::Queen => 900,
-                Piece::King => 0,
-            };
-            if stand_pat + gain + 200 < alpha {
-                continue;
-            }
-        }
-
-        let mut child = board.clone();
-        child.play_unchecked(mv);
-        let score = -quiescence_enhanced(&child, -beta, -alpha);
-        if score >= beta {
-            return beta;
-        }
-        if score > alpha {
-            alpha = score;
-        }
-    }
-
-    alpha
-}
-
 pub struct SearchContext {
     tt: TTable,
     killers: Vec<[Option<Move>; 2]>,
@@ -369,7 +320,7 @@ fn negamax_enhanced(
     }
 
     if depth == 0 {
-        return quiescence_enhanced(board, alpha, beta);
+        return quiescence_classic(board, alpha, beta);
     }
 
     // Null move pruning (R=2)
