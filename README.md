@@ -26,8 +26,8 @@ Your model faces progressively stronger baselines. You must score 70%+ to pass e
 |-------|------|----------|
 | 1 | Beginner | Depth 1 + quiescence (same search as your NN, but with handcrafted eval) |
 | 2 | Novice | Depth 2 + quiescence (sees your response to each move) |
-| 3 | Advanced | Depth 3 + TT/PVS/null-move pruning |
-| 4 | Expert | Depth 4 + TT/PVS/null-move pruning (~1500–1600 Elo) |
+| 3 | Advanced | Depth 3 + quiescence + TT/PVS/null-move pruning |
+| 4 | Expert | Depth 4 + quiescence + TT/PVS/null-move pruning (~1500–1600 Elo) |
 
 All levels use the same quiescence search (follow captures to quiet positions, then evaluate). At Level 1, the only difference between your NN and the baseline is the eval function. At higher levels, the baseline searches deeper and adds search enhancements (transposition tables, principal variation search, null-move pruning). By default the runner tests all levels and stops at the first failure.
 

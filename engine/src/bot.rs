@@ -51,10 +51,10 @@ impl Level {
 
     pub fn description(self) -> &'static str {
         match self.value {
-            1 => "Depth 1 classic + quiescence — both sides follow captures",
-            2 => "Depth 2 classic — 2-ply alpha-beta + quiescence",
-            3 => "Depth 3 enhanced — TT/PVS/NMP/delta pruning",
-            4 => "Depth 4 enhanced — full strength baseline",
+            1 => "Depth 1 + quiescence",
+            2 => "Depth 2 + quiescence",
+            3 => "Depth 3 + quiescence + TT/PVS/NMP",
+            4 => "Depth 4 + quiescence + TT/PVS/NMP",
             _ => unreachable!(),
         }
     }
@@ -79,7 +79,7 @@ pub struct BaselineBot {
     pub depth: u32,
     pub candidate_window: i32,
     pub blunder_rate: f64,
-    /// true = enhanced (TT, PVS, NMP, delta pruning), false = classic
+    /// true = adds TT, PVS, NMP to the search
     pub enhanced: bool,
     /// Shared search context for enhanced mode (persists across moves)
     ctx: std::cell::RefCell<SearchContext>,
@@ -125,15 +125,9 @@ impl BaselineBot {
 
     pub fn description(&self) -> String {
         if self.enhanced {
-            format!(
-                "Alpha-beta depth {} + TT + PVS + NMP + delta pruning, tapered eval",
-                self.depth
-            )
+            format!("Depth {} + TT/PVS/NMP", self.depth)
         } else {
-            format!(
-                "Alpha-beta depth {} + quiescence (classic), tapered eval",
-                self.depth
-            )
+            format!("Depth {}", self.depth)
         }
     }
 }

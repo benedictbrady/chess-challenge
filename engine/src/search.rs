@@ -113,7 +113,7 @@ fn sorted_moves(
     moves
 }
 
-/// Captures with MVV-LVA ordering (used by both classic and enhanced quiescence).
+/// Captures and promotions with MVV-LVA ordering (used by all quiescence search).
 pub fn capture_moves(board: &Board) -> Vec<Move> {
     let mut captures = Vec::with_capacity(16);
     board.generate_moves(|piece_moves| {
@@ -236,7 +236,7 @@ pub fn best_move_with_scores_classic(board: &Board, depth: u32) -> Vec<(Move, i3
 }
 
 // ===========================================================================
-// ENHANCED SEARCH — TT, PVS, null move pruning, delta pruning, killers, history
+// ENHANCED SEARCH — TT, PVS, null move pruning, killers, history
 // ===========================================================================
 
 pub struct SearchContext {
