@@ -15,7 +15,7 @@ Train an ONNX evaluation network and run it against increasingly strong baseline
 | 3 | Advanced | Depth 3 — with search optimizations |
 | 4 | Expert | Depth 4 — with search optimizations (~1500–1600 Elo) |
 
-Your NN always uses depth 1. All levels use the same quiescence search (follow captures to quiet positions, then evaluate). The runner tests all levels and stops at the first failure.
+Your NN always uses depth 1. Both your NN and the baselines use **identical quiescence search structure**: follow captures and promotions to a quiet position, then evaluate. The only difference is the eval function (your NN vs handcrafted). The runner tests all levels and stops at the first failure.
 
 ---
 
@@ -57,9 +57,11 @@ Two 770-element halves (dual perspective). Each half: 12 piece planes × 64 squa
 1. Generate all legal moves
 2. For each move, apply it to get a child position
 3. If checkmate or draw, score immediately
-4. Otherwise, run **quiescence search** (follow captures to quiet position, then evaluate with your NN)
+4. Otherwise, run **quiescence search** (follow captures/promotions to quiet position, then evaluate with your NN)
 5. Negate the eval (opponent's perspective)
 6. Pick the move with the highest eval
+
+The quiescence search is the same for both your NN and the baseline — only captures and promotions are followed, no check extensions or delta pruning. Each move at root gets a full-window search (no alpha-beta narrowing at root level). This ensures the only variable is your eval function.
 
 ### ONNX Requirements
 
@@ -73,7 +75,7 @@ Two 770-element halves (dual perspective). Each half: 12 piece planes × 64 squa
 ## Rules
 
 1. **Depth-1 search only** — enforced by the harness, cannot be changed
-2. **50 games per level** — 25 openings × 2 colors
+2. **50 games per level** — fixed set of openings × 2 colors (deterministic)
 3. **Score 70%+** — win=1, draw=0.5, loss=0 (need 35/50)
 4. **10M parameter limit**
 5. **Ranked by** highest level passed, then fewest parameters
