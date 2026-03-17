@@ -1,2 +1,6 @@
 /target
 dashboard/
+
+# Local-only directories
+.claude/worktrees/
+training/
