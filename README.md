@@ -67,6 +67,22 @@ Two 770-element halves (dual perspective). Each half: 12 piece planes × 64 squa
 - Output shape `[N, 1]`
 - `ir_version = 8`, opset 17
 - Max **10,000,000 parameters**
+- **Batch dimension must be named** (e.g. `dim_param="batch"`) on both input and output
+
+The harness uses batched inference for performance. Models with unnamed/anonymous batch dimensions will be **rejected at load time** with a diagnostic error.
+
+**Common pitfall:** Using `MatMul + Add` for the final layer produces an output with an anonymous batch dimension, even if `dynamic_axes` names it. Use `nn.Linear` (which exports as a `Gemm` op) instead, or verify your export with `validate_onnx()`.
+
+**Correct export example:**
+```python
+torch.onnx.export(
+    model, dummy, "model.onnx",
+    input_names=["board"],
+    output_names=["eval"],
+    dynamic_axes={"board": {0: "batch"}, "eval": {0: "batch"}},
+    opset_version=17,
+)
+```
 
 ---
 

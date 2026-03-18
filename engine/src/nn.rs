@@ -201,7 +201,41 @@ pub struct NnEvalBot {
 impl NnEvalBot {
     pub fn load(path: &Path) -> Result<NnEvalBot, Box<dyn std::error::Error + Send + Sync>> {
         let param_count = count_parameters(path)?;
-        let session = Session::builder()?.commit_from_file(path)?;
+        let mut session = Session::builder()?.commit_from_file(path)?;
+
+        // Probe: verify batched inference works (batch=2).
+        // Models with unnamed/anonymous batch dimensions on input or output
+        // will fail here instead of silently falling back to per-position
+        // inference at runtime (which is ~30-60x slower).
+        {
+            let dummy = vec![0.0f32; 2 * TENSOR_SIZE];
+            let input = Tensor::<f32>::from_array(([2, TENSOR_SIZE], dummy))
+                .map_err(|e| format!("batch probe: failed to create tensor: {e}"))?;
+            let outputs = session.run(ort::inputs!["board" => input])
+                .map_err(|e| format!(
+                    "batch probe: model does not support batched inference (batch=2 failed).\n\
+                     This usually means the ONNX model has unnamed/anonymous batch dimensions.\n\
+                     Fix: ensure your export uses named dynamic axes, e.g.:\n  \
+                       dynamic_axes={{\"board\": {{0: \"batch\"}}, \"eval\": {{0: \"batch\"}}}}\n\
+                     Or use a Linear (Gemm) final layer instead of MatMul+Add.\n\
+                     ORT error: {e}"))?;
+            let (shape, raw) = outputs[0].try_extract_tensor::<f32>()
+                .map_err(|e| format!(
+                    "batch probe: model output is not extractable as a float tensor.\n\
+                     Expected output shape [N, 1] with a named batch dimension.\n\
+                     ORT error: {e}"))?;
+            if raw.len() != 2 || shape.len() != 2 || shape[0] != 2 || shape[1] != 1 {
+                return Err(format!(
+                    "batch probe: expected output shape [2, 1] (2 values), \
+                     got shape {:?} ({} values).\n\
+                     Your model's output batch dimension may be unnamed/anonymous.\n\
+                     Fix: use named dynamic axes in your ONNX export, or use a Linear (Gemm) \
+                     final layer instead of MatMul+Add.",
+                    &*shape, raw.len()
+                ).into());
+            }
+        }
+
         Ok(NnEvalBot {
             session: Mutex::new(session),
             param_count,
@@ -227,7 +261,6 @@ impl NnEvalBot {
     /// Evaluate a batch of positions in a single ONNX call.
     /// Each tensor in `tensors` is a flat [1540] encoding.
     /// Returns one scalar eval per position.
-    /// Falls back to one-at-a-time inference if batching fails.
     fn nn_eval_batch(
         &self,
         tensors: &[Vec<f32>],
@@ -236,19 +269,7 @@ impl NnEvalBot {
         if n == 0 {
             return Ok(Vec::new());
         }
-
-        // Try batched inference first
-        if let Ok(results) = self.nn_eval_batch_inner(tensors) {
-            return Ok(results);
-        }
-
-        // Fall back to one-at-a-time
-        let mut results = Vec::with_capacity(n);
-        for t in tensors {
-            let r = self.nn_eval_batch_inner(&[t.clone()])?;
-            results.push(r[0]);
-        }
-        Ok(results)
+        self.nn_eval_batch_inner(tensors)
     }
 
     fn nn_eval_batch_inner(
