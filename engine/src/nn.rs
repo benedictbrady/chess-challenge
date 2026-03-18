@@ -360,7 +360,7 @@ impl NnEvalBot {
 
         let in_check = !board.checkers().is_empty();
 
-        let stand_pat = if in_check {
+        let _stand_pat = if in_check {
             f32::NEG_INFINITY
         } else {
             let sp = match stand_pat_hint {
