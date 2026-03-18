@@ -575,7 +575,18 @@ fn main() {
     let mut results: Vec<LevelResult> = Vec::new();
 
     for level in &levels {
+        nn.reset_counters();
         let result = run_level(*level, &nn, &positions);
+        let (calls, positions_evald) = nn.counters();
+        let avg_batch = if calls > 0 {
+            positions_evald as f64 / calls as f64
+        } else {
+            0.0
+        };
+        println!(
+            "  Inference: {} ONNX calls, {} positions, avg batch size {:.1}",
+            calls, positions_evald, avg_batch,
+        );
         let failed = !result.passed;
         results.push(result);
 
