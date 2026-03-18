@@ -1,0 +1,89 @@
+# Fixed set of 25 openings for evaluation (each played as white and black = 50 games)
+# Covers all major opening families. Positions after 2-6 half-moves.
+
+# ── Open Games (1.e4 e5) ──────────────────────────────────────────────────────
+
+# 1. Italian Game: 1.e4 e5 2.Nf3 Nc6 3.Bc4
+r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3
+
+# 2. Ruy Lopez: 1.e4 e5 2.Nf3 Nc6 3.Bb5
+r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3
+
+# 3. Scotch Game: 1.e4 e5 2.Nf3 Nc6 3.d4
+r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq d3 0 3
+
+# 4. King's Gambit: 1.e4 e5 2.f4
+rnbqkbnr/pppp1ppp/8/4p3/4PP2/8/PPPP2PP/RNBQKBNR b KQkq f3 0 2
+
+# ── Semi-Open Games (1.e4, not e5) ────────────────────────────────────────────
+
+# 5. Sicilian Defense: 1.e4 c5
+rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2
+
+# 6. Sicilian Najdorf: 1.e4 c5 2.Nf3 d6 3.d4 cxd4 4.Nxd4 Nf6 5.Nc3 a6
+rnbqkb1r/1p2pppp/p2p1n2/8/3NP3/2N5/PPP2PPP/R1BQKB1R w KQkq - 0 6
+
+# 7. French Defense: 1.e4 e6
+rnbqkbnr/pppp1ppp/4p3/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2
+
+# 8. Caro-Kann Defense: 1.e4 c6
+rnbqkbnr/pp1ppppp/2p5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2
+
+# 9. Pirc Defense: 1.e4 d6 2.d4 Nf6 3.Nc3
+rnbqkb1r/ppp1pppp/3p1n2/8/3PP3/2N5/PPP2PPP/R1BQKBNR b KQkq - 2 3
+
+# 10. Scandinavian Defense: 1.e4 d5
+rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2
+
+# ── Closed Games (1.d4 d5) ──────────────────────────────────────────────────
+
+# 11. Queen's Gambit Declined: 1.d4 d5 2.c4 e6
+rnbqkbnr/ppp2ppp/4p3/3p4/2PP4/8/PP2PPPP/RNBQKBNR w KQkq - 0 3
+
+# 12. Queen's Gambit Accepted: 1.d4 d5 2.c4 dxc4
+rnbqkbnr/ppp1pppp/8/8/2pP4/8/PP2PPPP/RNBQKBNR w KQkq - 0 3
+
+# 13. Slav Defense: 1.d4 d5 2.c4 c6
+rnbqkbnr/pp2pppp/2p5/3p4/2PP4/8/PP2PPPP/RNBQKBNR w KQkq - 0 3
+
+# 14. London System: 1.d4 d5 2.Bf4
+rnbqkbnr/ppp1pppp/8/3p4/3P1B2/8/PPP1PPPP/RN1QKBNR b KQkq - 1 2
+
+# 15. Catalan: 1.d4 Nf6 2.c4 e6 3.g3
+rnbqkb1r/pppp1ppp/4pn2/8/2PP4/6P1/PP2PP1P/RNBQKBNR b KQkq - 0 3
+
+# ── Indian Defenses (1.d4 Nf6) ──────────────────────────────────────────────
+
+# 16. King's Indian Defense: 1.d4 Nf6 2.c4 g6 3.Nc3 Bg7
+rnbqk2r/ppppppbp/5np1/8/2PP4/2N5/PP2PPPP/R1BQKBNR w KQkq - 2 4
+
+# 17. Nimzo-Indian: 1.d4 Nf6 2.c4 e6 3.Nc3 Bb4
+rnbqk2r/pppp1ppp/4pn2/8/1bPP4/2N5/PP2PPPP/R1BQKBNR w KQkq - 2 4
+
+# 18. Queen's Indian: 1.d4 Nf6 2.c4 e6 3.Nf3 b6
+rnbqkb1r/p1pp1ppp/1p2pn2/8/2PP4/5N2/PP2PPPP/RNBQKB1R w KQkq - 0 4
+
+# 19. Grunfeld Defense: 1.d4 Nf6 2.c4 g6 3.Nc3 d5
+rnbqkb1r/ppp1pp1p/5np1/3p4/2PP4/2N5/PP2PPPP/R1BQKBNR w KQkq d6 0 4
+
+# 20. Benoni Defense: 1.d4 Nf6 2.c4 c5 3.d5
+rnbqkb1r/pp1ppppp/5n2/2pP4/2P5/8/PP2PPPP/RNBQKBNR b KQkq - 0 3
+
+# 21. Dutch Defense: 1.d4 f5
+rnbqkbnr/ppppp1pp/8/5p2/3P4/8/PPP1PPPP/RNBQKBNR w KQkq f6 0 2
+
+# ── Flank Openings ──────────────────────────────────────────────────────────
+
+# 22. English Opening: 1.c4
+rnbqkbnr/pppppppp/8/8/2P5/8/PP1PPPPP/RNBQKBNR b KQkq c3 0 1
+
+# 23. Reti Opening: 1.Nf3 d5 2.c4
+rnbqkbnr/ppp1pppp/8/3p4/2P5/5N2/PP1PPPPP/RNBQKB1R b KQkq c3 0 2
+
+# 24. Bird Opening: 1.f4
+rnbqkbnr/pppppppp/8/8/5P2/8/PPPPP1PP/RNBQKBNR b KQkq f3 0 1
+
+# ── Other ───────────────────────────────────────────────────────────────────
+
+# 25. Evans Gambit: 1.e4 e5 2.Nf3 Nc6 3.Bc4 Bc5 4.b4
+r1bqk1nr/pppp1ppp/2n5/2b1p3/1PB1P3/5N2/P1PP1PPP/RNBQK2R b KQkq b3 0 4

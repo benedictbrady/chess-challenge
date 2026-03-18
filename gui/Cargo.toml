@@ -1,0 +1,13 @@
+[package]
+name = "gui"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "gui"
+path = "src/main.rs"
+
+[dependencies]
+engine = { path = "../engine" }
+eframe = "0.29"
+egui = "0.29"
